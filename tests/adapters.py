@@ -3,15 +3,13 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable
 from typing import IO, Any, BinaryIO
-from collections.abc import Iterable
-from jaxtyping import Float, Int
 
 import numpy.typing as npt
 import torch
 from jaxtyping import Float, Int
 from torch import Tensor
 
-
+from cs336_basics.bpe_tokenizer.bpe_tokenzer import BPETokenizer
 from cs336_basics.bpe_tokenizer.train_bpe import fast_bpe
 
 
@@ -564,7 +562,7 @@ def get_tokenizer(
     Returns:
         A BPE tokenizer that uses the provided vocab, merges, and special tokens.
     """
-    raise NotImplementedError
+    return BPETokenizer(vocab=vocab, merges=merges, special_tokens=special_tokens)
 
 
 def run_train_bpe(
