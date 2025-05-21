@@ -1,3 +1,4 @@
+import logging
 import multiprocessing
 import time
 from collections import Counter, defaultdict
@@ -10,6 +11,8 @@ from cs336_basics.bpe_tokenizer.constants import GPT2_REGEX
 from cs336_basics.bpe_tokenizer.types import FilePath, Merges, Vocab
 from cs336_basics.bpe_tokenizer.utils import find_chunk_boundaries
 
+logger = logging.getLogger(__name__)
+
 
 def train_bpe_fast(
     input_path: FilePath,
@@ -18,8 +21,12 @@ def train_bpe_fast(
     pre_tokenization_regex: str = GPT2_REGEX,
     split_special_token: bytes = b"<|endoftext|>",
     num_processes: int | None = None,
+    verbose: bool = False,
 ) -> tuple[Vocab, Merges]:
     num_processes = num_processes or multiprocessing.cpu_count()
+
+    old_logger_level = logger.getEffectiveLevel()
+    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
 
     with open(input_path, "rb") as f_for_boundaries:
         chunk_boundaries = find_chunk_boundaries(
@@ -39,20 +46,20 @@ def train_bpe_fast(
         for start, end in zip(chunk_boundaries[:-1], chunk_boundaries[1:])
     ]
 
-    print("Pre-tokenizing")
+    logger.debug("Pre-tokenizing")
     tic = time.time()
     with multiprocessing.Pool(processes=num_processes) as pool:
-        results = list(tqdm(pool.imap_unordered(_process_chunk, tasks)))
-    print(f"Pre-tokenizated in {time.time() - tic:.2f} seconds")
+        results = list(tqdm(pool.imap_unordered(_process_chunk, tasks), total=len(tasks), disable=not verbose))
+    logger.debug(f"Pre-tokenizated in {time.time() - tic:.2f} seconds")
 
     token_seq_to_count = sum(results, Counter())
 
-    print(f"num pre-tokens: {len(token_seq_to_count)}")
+    logger.debug(f"num pre-tokens: {len(token_seq_to_count)}")
 
     token_seqs = [token_seq for token_seq in token_seq_to_count.keys()]
     token_seq_counts = [count for count in token_seq_to_count.values()]
 
-    print("Building token pair counts")
+    logger.debug("Building token pair counts")
     tic = time.time()
     token_pair_to_token_seq_idx = defaultdict(set)
     token_pair_counts = defaultdict(int)
@@ -60,12 +67,12 @@ def train_bpe_fast(
         for b1, b2 in zip(token_seq[:-1], token_seq[1:]):
             token_pair_counts[(b1, b2)] += count
             token_pair_to_token_seq_idx[(b1, b2)].add(i)
-    print(f"Token pair counts built in {time.time() - tic:.2f} seconds")
+    logger.debug(f"Token pair counts built in {time.time() - tic:.2f} seconds")
 
     vocab = {i: bytes([i]) for i in range(256)}
     num_merges = vocab_size - len(vocab) - len(special_tokens)
     merges = [None] * num_merges
-    for merge_idx in tqdm(range(num_merges), desc="Merging"):
+    for merge_idx in tqdm(range(num_merges), desc="Merging", disable=not verbose):
         new_merge = max(token_pair_counts.keys(), key=lambda bp: (token_pair_counts[bp], bp))
         new_token = new_merge[0] + new_merge[1]
 
@@ -90,6 +97,8 @@ def train_bpe_fast(
 
     for special_token in special_tokens:
         vocab[len(vocab)] = special_token.encode("utf-8")
+
+    logger.setLevel(old_logger_level)
 
     return vocab, merges
 

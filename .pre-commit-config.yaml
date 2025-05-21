@@ -1,0 +1,8 @@
+repos:
+  - repo: local
+    hooks:
+      - id: pre-commit-tests
+        name: Pre-commit tests
+        entry: bash -c 'pytest $(cat .pre-commit-test-files)'
+        language: system
+        pass_filenames: false

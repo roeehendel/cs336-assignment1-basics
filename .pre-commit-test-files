@@ -1,0 +1,2 @@
+tests/test_train_bpe.py
+tests/test_tokenizer.py
