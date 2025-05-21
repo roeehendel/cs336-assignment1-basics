@@ -1,10 +1,11 @@
 from collections.abc import Iterable, Iterator
+from functools import lru_cache
 
 import regex as re
 
+from cs336_basics.bpe_tokenizer.bpe_tokenizer_training import _apply_merge
 from cs336_basics.bpe_tokenizer.constants import GPT2_REGEX
 from cs336_basics.bpe_tokenizer.serialization import load_merges, load_vocab
-from cs336_basics.bpe_tokenizer.train_bpe import _apply_merge
 from cs336_basics.bpe_tokenizer.types import FilePath, Merges, Vocab
 
 
@@ -20,24 +21,21 @@ class BPETokenizer:
             special_tokens = []
 
         for special_token in special_tokens:
-            vocab[len(vocab)] = special_token.encode("utf-8")
+            if special_token.encode("utf-8") not in vocab.values():
+                vocab[len(vocab)] = special_token.encode("utf-8")
 
         self._id_to_token = vocab
         self._token_to_id = {v: k for k, v in vocab.items()}
         self._merges = merges
         self._special_tokens = set(special_tokens)
-        self._special_token_regex = re.compile("|".join(re.escape(special_token) for special_token in special_tokens))
-        self._pre_tokenization_regex = re.compile(pre_tokenization_regex)
-
-        full_regex = ""
         if special_tokens:
-            full_regex = "|".join(re.escape(special_token) for special_token in special_tokens) + "|"
-        full_regex += pre_tokenization_regex
-        self._full_regex = re.compile(full_regex)
-
-        self._max_special_token_length = (
-            max(len(special_token) for special_token in special_tokens) if special_tokens else 0
-        )
+            escaped_tokens_pattern = "|".join(
+                re.escape(token) for token in sorted(special_tokens, key=len, reverse=True)
+            )
+            self._special_token_regex = re.compile(f"({escaped_tokens_pattern})")
+        else:
+            self._special_token_regex = re.compile(r"(?!)")
+        self._pre_tokenization_regex = re.compile(pre_tokenization_regex)
 
     @classmethod
     def from_files(
@@ -57,30 +55,34 @@ class BPETokenizer:
         iterator = iter(iterable)
         buffer = next(iterator)
 
-        while True:
-            m = self._full_regex.search(buffer)
-            if m is None:
+        for _ in range(100):
+            split_by_special_token = self._special_token_regex.split(buffer)
+
+            for substr in split_by_special_token[:-1]:
+                if substr in self._special_tokens:
+                    yield self._token_to_id[substr.encode("utf-8")]
+                else:
+                    yield from self._encode_clean_chunk(substr)
+
+            buffer = split_by_special_token[-1]
+            chunk = next(iterator, None)
+            if chunk is None:
+                yield from self._encode_clean_chunk(buffer)
                 return
-            elif m.end() >= len(buffer) - self._max_special_token_length - 1 and m.group() not in self._special_tokens:
-                try:
-                    buffer += next(iterator)
-                except StopIteration:
-                    yield from self._encode_pre_token(buffer)
-                    return
-            else:
-                match_text = m.group()
+            buffer += chunk
 
-                yield from self._encode_pre_token(match_text)
+    def _encode_clean_chunk(self, chunk: str) -> Iterator[int]:
+        for m in self._pre_tokenization_regex.finditer(chunk):
+            yield from self._encode_pre_token(m.group())
 
-                buffer = buffer[m.end() :]
-
+    @lru_cache(maxsize=10_000)
     def _encode_pre_token(self, pre_token: str) -> list[int]:
-        if pre_token in self._special_tokens:
-            return [self._token_to_id[pre_token.encode("utf-8")]]
-
         tokens = [bytes([b]) for b in pre_token.encode("utf-8")]
+        token_pairs_set = {(t1, t2) for t1, t2 in zip(tokens, tokens[1:])}
         for merge in self._merges:
-            tokens = _apply_merge(tokens, merge)
+            if merge in token_pairs_set:
+                tokens = _apply_merge(tokens, merge)
+                token_pairs_set = {(t1, t2) for t1, t2 in zip(tokens, tokens[1:])}
         return [self._token_to_id[token] for token in tokens]
 
     def decode(self, ids: list[int]) -> str:

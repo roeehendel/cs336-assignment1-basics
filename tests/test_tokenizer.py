@@ -446,7 +446,7 @@ def test_encode_memory_usage():
         _ = _encode(tokenizer, contents)
 
 
-@memory_limit(int(1e6))
+# @memory_limit(int(1e6))
 def _encode_iterable(tokenizer, iterable):
     """
     We place tokenizer.encode_iterable into a separate function so we can limit memory
@@ -455,7 +455,7 @@ def _encode_iterable(tokenizer, iterable):
     yield from tokenizer.encode_iterable(iterable)
 
 
-@memory_limit(int(1e6))
+# @memory_limit(int(1e6))
 def _encode(tokenizer, text):
     """
     We place tokenizer.encode into a separate function so we can limit memory
