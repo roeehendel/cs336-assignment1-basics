@@ -1,5 +1,6 @@
 import logging
 import multiprocessing
+import os
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ from cs336_basics.bpe_tokenizer.utils import find_chunk_boundaries
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MAX_CHUNK_SIZE = 2**23
+
 
 def train_bpe_fast(
     input_path: FilePath,
@@ -21,38 +24,21 @@ def train_bpe_fast(
     pre_tokenization_regex: str = GPT2_REGEX,
     split_special_token: bytes = b"<|endoftext|>",
     num_processes: int | None = None,
+    max_chunk_size: int = DEFAULT_MAX_CHUNK_SIZE,
     verbose: bool = False,
 ) -> tuple[Vocab, Merges]:
-    num_processes = num_processes or multiprocessing.cpu_count()
-
     old_logger_level = logger.getEffectiveLevel()
     logger.setLevel(logging.DEBUG if verbose else logging.INFO)
 
-    with open(input_path, "rb") as f_for_boundaries:
-        chunk_boundaries = find_chunk_boundaries(
-            file=f_for_boundaries,
-            desired_num_chunks=num_processes * 10,
-            split_special_token=split_special_token,
-        )
-
-    tasks = [
-        Chunk(
-            input_path=input_path,
-            start_offset=start,
-            end_offset=end,
-            special_tokens=special_tokens,
-            pre_tokenization_regex=pre_tokenization_regex,
-        )
-        for start, end in zip(chunk_boundaries[:-1], chunk_boundaries[1:])
-    ]
-
-    logger.debug("Pre-tokenizing")
-    tic = time.time()
-    with multiprocessing.Pool(processes=num_processes) as pool:
-        results = list(tqdm(pool.imap_unordered(_process_chunk, tasks), total=len(tasks), disable=not verbose))
-    logger.debug(f"Pre-tokenizated in {time.time() - tic:.2f} seconds")
-
-    token_seq_to_count = sum(results, Counter())
+    token_seq_to_count = _token_seq_to_count_from_file(
+        input_path=input_path,
+        special_tokens=special_tokens,
+        pre_tokenization_regex=pre_tokenization_regex,
+        split_special_token=split_special_token,
+        num_processes=num_processes,
+        max_chunk_size=max_chunk_size,
+        verbose=verbose,
+    )
 
     logger.debug(f"num pre-tokens: {len(token_seq_to_count)}")
 
@@ -103,6 +89,74 @@ def train_bpe_fast(
     return vocab, merges
 
 
+def _token_seq_to_count_from_file(
+    input_path: FilePath,
+    special_tokens: list[str],
+    pre_tokenization_regex: str = GPT2_REGEX,
+    split_special_token: bytes = b"<|endoftext|>",
+    num_processes: int | None = None,
+    max_chunk_size: int = DEFAULT_MAX_CHUNK_SIZE,
+    verbose: bool = False,
+) -> Counter:
+    file_size = os.path.getsize(input_path)
+    # Ensure num_chunks is at least 1 if file_size > 0, to handle small files correctly for find_chunk_boundaries
+    if file_size == 0:
+        return Counter()
+    desired_num_chunks = (file_size + max_chunk_size - 1) // max_chunk_size
+    if desired_num_chunks == 0:  # Should only happen if file_size was 0, handled above. Defensive.
+        desired_num_chunks = 1
+
+    with open(input_path, "rb") as f_for_boundaries:
+        chunk_boundaries = find_chunk_boundaries(
+            file=f_for_boundaries,
+            desired_num_chunks=desired_num_chunks,
+            split_special_token=split_special_token,
+        )
+
+    tasks = [
+        Chunk(
+            input_path=input_path,
+            start_offset=start,
+            end_offset=end,
+            special_tokens=special_tokens,
+            pre_tokenization_regex=pre_tokenization_regex,
+        )
+        for start, end in zip(chunk_boundaries[:-1], chunk_boundaries[1:])
+    ]
+
+    if not tasks:
+        if verbose:
+            logger.info("No processable chunks found after boundary calculations, returning empty counts.")
+        return Counter()
+
+    logger.debug(f"Created {len(tasks)} chunks for processing.")
+
+    logger.debug("Pre-tokenizing")
+    tic = time.time()
+    token_seq_to_count = Counter()
+
+    if num_processes is None:
+        num_processes = multiprocessing.cpu_count()
+
+    if num_processes < 0:
+        for task in tqdm(tasks, total=len(tasks), desc="Processing chunks sequentially", disable=not verbose):
+            token_seq_to_count.update(_process_chunk(task))
+    else:
+        with multiprocessing.Pool(processes=num_processes) as pool:
+            for chunk_result in tqdm(
+                pool.imap_unordered(_process_chunk, tasks),
+                total=len(tasks),
+                desc="Processing chunks",
+                disable=not verbose,
+            ):
+                token_seq_to_count.update(chunk_result)
+
+    logger.debug(
+        f"Pre-tokenization and aggregation completed in {time.time() - tic:.2f} seconds. Total unique tokens: {len(token_seq_to_count)}"
+    )
+    return token_seq_to_count
+
+
 @dataclass
 class Chunk:
     input_path: FilePath
@@ -116,20 +170,19 @@ def _process_chunk(chunk: Chunk) -> Counter:
     """
     Reads a specific chunk from the input file and processes it to get token sequence counts.
     """
-    with open(chunk.input_path, "rb") as f:
+    with open(chunk.input_path, encoding="utf-8") as f:
         f.seek(chunk.start_offset)
-        chunk_bytes = f.read(chunk.end_offset - chunk.start_offset)
-    chunk_text = chunk_bytes.decode("utf-8", errors="strict")
+        chunk_text = f.read(chunk.end_offset - chunk.start_offset)
     if not chunk_text:
         return Counter()
-    return _get_token_seq_to_count(
+    return _token_seq_to_count_from_text(
         text=chunk_text,
         special_tokens=chunk.special_tokens,
         pre_tokenization_regex=chunk.pre_tokenization_regex,
     )
 
 
-def _get_token_seq_to_count(
+def _token_seq_to_count_from_text(
     text: str,
     special_tokens: list[str],
     pre_tokenization_regex: str = GPT2_REGEX,
@@ -152,6 +205,7 @@ def _get_token_seq_to_count(
 
 
 def _apply_merge(token_seq: tuple[bytes, ...], merge: tuple[bytes, bytes]) -> tuple[bytes, ...]:
+    # TODO: can this be simplified and made faster?
     merge_token = merge[0] + merge[1]
 
     merged_token_seq = []
@@ -177,7 +231,7 @@ def train_bpe_simple(
     with open(input_path) as f:
         text = f.read()
 
-    token_seq_to_count = _get_token_seq_to_count(
+    token_seq_to_count = _token_seq_to_count_from_text(
         text=text,
         special_tokens=special_tokens,
         pre_tokenization_regex=pre_tokenization_regex,

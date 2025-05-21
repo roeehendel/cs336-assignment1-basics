@@ -162,5 +162,7 @@ cython_debug/
 .ruff_cache/
 *.zip
 
-# project dirs
+# development outputs
 data
+profile.*
+
