@@ -1,7 +1,7 @@
 import os
 
+from cs336_basics.bpe_tokenizer.bpe_tokenizer_training import train_bpe_fast
 from cs336_basics.bpe_tokenizer.serialization import load_merges, load_vocab, save_merges, save_vocab
-from cs336_basics.bpe_tokenizer.train_bpe import fast_bpe
 
 OUTPUTS_DIR = "outputs"
 TS_OUTPUT_DIR = os.path.join(OUTPUTS_DIR, "tiny_stories")
@@ -10,7 +10,7 @@ TS_MERGES_FILE = os.path.join(TS_OUTPUT_DIR, "merges.json")
 
 
 def train_bpe_tinystories():
-    vocab, merges = fast_bpe(
+    vocab, merges = train_bpe_fast(
         # input_path="data/TinyStoriesV2-GPT4-sample.txt",
         # input_path="data/TinyStoriesV2-GPT4-valid.txt",
         input_path="data/TinyStoriesV2-GPT4-train.txt",

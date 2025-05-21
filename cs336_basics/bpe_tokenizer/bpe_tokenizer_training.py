@@ -7,11 +7,11 @@ import regex as re
 from tqdm import tqdm
 
 from cs336_basics.bpe_tokenizer.constants import GPT2_REGEX
-from cs336_basics.bpe_tokenizer.pretokenization_example import find_chunk_boundaries
 from cs336_basics.bpe_tokenizer.types import FilePath, Merges, Vocab
+from cs336_basics.bpe_tokenizer.utils import find_chunk_boundaries
 
 
-def fast_bpe(
+def train_bpe_fast(
     input_path: FilePath,
     vocab_size: int,
     special_tokens: list[str],
@@ -159,7 +159,7 @@ def _apply_merge(token_seq: tuple[bytes, ...], merge: tuple[bytes, bytes]) -> tu
     return tuple(merged_token_seq)
 
 
-def slow_bpe(
+def train_bpe_simple(
     input_path: FilePath,
     vocab_size: int,
     special_tokens: list[str],
