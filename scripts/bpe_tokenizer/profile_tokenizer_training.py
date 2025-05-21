@@ -9,6 +9,7 @@ def main():
         vocab_size=10_000,
         special_tokens=["<|endoftext|>"],
         verbose=True,
+        sample_file=0.1,
         # num_processes=-1,
     )
 

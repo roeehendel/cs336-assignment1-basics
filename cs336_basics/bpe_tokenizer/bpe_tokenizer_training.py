@@ -1,18 +1,22 @@
+import functools
 import logging
+import math
 import multiprocessing
 import os
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 
+import heapdict
 import regex as re
 from tqdm import tqdm
 
 from cs336_basics.bpe_tokenizer.constants import GPT2_REGEX
 from cs336_basics.bpe_tokenizer.types import FilePath, Merges, Vocab
 from cs336_basics.bpe_tokenizer.utils import find_chunk_boundaries
+from cs336_basics.utils.logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DEFAULT_MAX_CHUNK_SIZE = 2**23
 
@@ -26,9 +30,12 @@ def train_bpe_fast(
     num_processes: int | None = None,
     max_chunk_size: int = DEFAULT_MAX_CHUNK_SIZE,
     verbose: bool = False,
+    sample_file: float | None = None,
 ) -> tuple[Vocab, Merges]:
     old_logger_level = logger.getEffectiveLevel()
     logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+
+    logger.debug("Training BPE tokenizer")
 
     token_seq_to_count = _token_seq_to_count_from_file(
         input_path=input_path,
@@ -38,54 +45,90 @@ def train_bpe_fast(
         num_processes=num_processes,
         max_chunk_size=max_chunk_size,
         verbose=verbose,
+        sample_file=sample_file,
     )
 
     logger.debug(f"num pre-tokens: {len(token_seq_to_count)}")
 
-    token_seqs = [token_seq for token_seq in token_seq_to_count.keys()]
-    token_seq_counts = [count for count in token_seq_to_count.values()]
+    token_seqs = list(token_seq_to_count.keys())
+    token_seq_counts = list(token_seq_to_count.values())
 
     logger.debug("Building token pair counts")
     tic = time.time()
     token_pair_to_token_seq_idx = defaultdict(set)
-    token_pair_counts = defaultdict(int)
+
+    token_pair_counts_raw = defaultdict(int)
     for i, (token_seq, count) in enumerate(zip(token_seqs, token_seq_counts)):
-        for b1, b2 in zip(token_seq[:-1], token_seq[1:]):
-            token_pair_counts[(b1, b2)] += count
-            token_pair_to_token_seq_idx[(b1, b2)].add(i)
-    logger.debug(f"Token pair counts built in {time.time() - tic:.2f} seconds")
+        for token_pair in zip(token_seq[:-1], token_seq[1:]):
+            token_pair_counts_raw[token_pair] += count
+            token_pair_to_token_seq_idx[token_pair].add(i)
+
+    token_pair_counts = heapdict.heapdict()
+    for token_pair, count in token_pair_counts_raw.items():
+        token_pair_counts[token_pair] = _get_priority_for_heapdict(token_pair, count)
+
+    logger.debug(f"Token pair counts built in {time.time() - tic:.2f} seconds. Unique pairs: {len(token_pair_counts)}")
 
     vocab = {i: bytes([i]) for i in range(256)}
-    num_merges = vocab_size - len(vocab) - len(special_tokens)
-    merges = [None] * num_merges
-    for merge_idx in tqdm(range(num_merges), desc="Merging", disable=not verbose):
-        new_merge = max(token_pair_counts.keys(), key=lambda bp: (token_pair_counts[bp], bp))
-        new_token = new_merge[0] + new_merge[1]
+    num_merges_to_perform = vocab_size - len(vocab) - len(special_tokens)
+    merges = [None] * num_merges_to_perform
 
+    for merge_idx in tqdm(range(num_merges_to_perform), desc="Merging", disable=not verbose):
+        if not token_pair_counts:
+            logger.warning("token_pair_counts (heapdict) is empty, stopping merges early.")
+            break
+
+        # get the next merge - the current most frequent token pair
+        new_merge, _ = token_pair_counts.popitem()
+        new_token = new_merge[0] + new_merge[1]
         merges[merge_idx] = new_merge
         vocab[len(vocab)] = new_token
 
-        idx_to_update = token_pair_to_token_seq_idx[new_merge].copy()
+        # update index
+        idx_to_update = token_pair_to_token_seq_idx.pop(new_merge, set()).copy()
         for idx in idx_to_update:
-            for b1, b2 in zip(token_seqs[idx][:-1], token_seqs[idx][1:]):
-                if (b1, b2) in token_pair_counts:
-                    token_pair_counts[(b1, b2)] -= token_seq_counts[idx]
-                if token_pair_counts[(b1, b2)] == 0:
-                    del token_pair_counts[(b1, b2)]
-                if idx in token_pair_to_token_seq_idx[(b1, b2)]:
-                    token_pair_to_token_seq_idx[(b1, b2)].remove(idx)
+            this_seq_occurrence_count = token_seq_counts[idx]
 
+            # update index by removing token pairs before merge
+            for old_pair in zip(token_seqs[idx][:-1], token_seqs[idx][1:]):
+                if old_pair == new_merge:
+                    continue
+
+                if old_pair in token_pair_counts:
+                    current_priority_value = token_pair_counts[old_pair]
+                    current_count = -current_priority_value[0]
+                    new_count = current_count - this_seq_occurrence_count
+
+                    if new_count > 0:
+                        token_pair_counts[old_pair] = _get_priority_for_heapdict(old_pair, new_count)
+                    else:
+                        del token_pair_counts[old_pair]
+
+                if old_pair in token_pair_to_token_seq_idx:
+                    token_pair_to_token_seq_idx[old_pair].discard(idx)
+                    if not token_pair_to_token_seq_idx[old_pair]:
+                        del token_pair_to_token_seq_idx[old_pair]
+
+            # update token sequence - apply the merge
             token_seqs[idx] = _apply_merge(token_seqs[idx], new_merge)
 
-            for b1, b2 in zip(token_seqs[idx][:-1], token_seqs[idx][1:]):
-                token_pair_counts[(b1, b2)] += token_seq_counts[idx]
-                token_pair_to_token_seq_idx[(b1, b2)].add(idx)
+            # update index by adding token pairs after merge
+            for new_pair in zip(token_seqs[idx][:-1], token_seqs[idx][1:]):
+                current_count = 0
+                if new_pair in token_pair_counts:
+                    current_priority_value = token_pair_counts[new_pair]
+                    current_count = -current_priority_value[0]
+
+                new_count = current_count + this_seq_occurrence_count
+                token_pair_counts[new_pair] = _get_priority_for_heapdict(new_pair, new_count)
+                token_pair_to_token_seq_idx[new_pair].add(idx)
 
     for special_token in special_tokens:
         vocab[len(vocab)] = special_token.encode("utf-8")
 
     logger.setLevel(old_logger_level)
 
+    merges = [m for m in merges if m is not None]
     return vocab, merges
 
 
@@ -97,14 +140,12 @@ def _token_seq_to_count_from_file(
     num_processes: int | None = None,
     max_chunk_size: int = DEFAULT_MAX_CHUNK_SIZE,
     verbose: bool = False,
+    sample_file: float | None = None,
 ) -> Counter:
     file_size = os.path.getsize(input_path)
-    # Ensure num_chunks is at least 1 if file_size > 0, to handle small files correctly for find_chunk_boundaries
     if file_size == 0:
         return Counter()
-    desired_num_chunks = (file_size + max_chunk_size - 1) // max_chunk_size
-    if desired_num_chunks == 0:  # Should only happen if file_size was 0, handled above. Defensive.
-        desired_num_chunks = 1
+    desired_num_chunks = int(math.ceil(file_size / max_chunk_size))
 
     with open(input_path, "rb") as f_for_boundaries:
         chunk_boundaries = find_chunk_boundaries(
@@ -124,9 +165,11 @@ def _token_seq_to_count_from_file(
         for start, end in zip(chunk_boundaries[:-1], chunk_boundaries[1:])
     ]
 
+    if sample_file:
+        tasks = tasks[: int(len(tasks) * sample_file)]
+
     if not tasks:
-        if verbose:
-            logger.info("No processable chunks found after boundary calculations, returning empty counts.")
+        logger.debug("No processable chunks found after boundary calculations, returning empty counts.")
         return Counter()
 
     logger.debug(f"Created {len(tasks)} chunks for processing.")
@@ -204,6 +247,36 @@ def _token_seq_to_count_from_text(
     return token_seq_to_count
 
 
+@functools.total_ordering
+class _InvertedBytes:
+    """Helper class for heap tie-breaking for byte strings."""
+
+    def __init__(self, b: bytes):
+        self.b = b
+
+    def __eq__(self, other):
+        if not isinstance(other, _InvertedBytes):
+            return NotImplemented
+        return self.b == other.b
+
+    def __lt__(self, other):
+        if not isinstance(other, _InvertedBytes):
+            return NotImplemented
+        # Key: self is "less" if self.b is "greater", for min-heap to pick largest
+        return self.b > other.b
+
+    def __hash__(self):  # Important for objects used as dict keys or in sets if __eq__ is defined
+        return hash(self.b)
+
+
+def _get_priority_for_heapdict(pair: tuple[bytes, bytes], count: int) -> tuple:
+    """Creates the priority tuple used as a value in heapdict."""
+    # heapdict is a min-heap based on its values.
+    # We want max count, then lexicographically largest pair.
+    # _InvertedBytes handles the reverse lexicographical comparison correctly.
+    return (-count, _InvertedBytes(pair[0]), _InvertedBytes(pair[1]))
+
+
 def _apply_merge(token_seq: tuple[bytes, ...], merge: tuple[bytes, bytes]) -> tuple[bytes, ...]:
     # TODO: can this be simplified and made faster?
     merge_token = merge[0] + merge[1]
@@ -244,8 +317,8 @@ def train_bpe_simple(
     for _ in range(num_merges):
         token_pair_counts = defaultdict(int)
         for token_seq, count in token_seq_to_count.items():
-            for b1, b2 in zip(token_seq[:-1], token_seq[1:]):
-                token_pair_counts[(b1, b2)] += count
+            for token_pair in zip(token_seq[:-1], token_seq[1:]):
+                token_pair_counts[token_pair] += count
 
         new_merge = max(token_pair_counts.keys(), key=lambda bp: (token_pair_counts[bp], bp))
         new_token = new_merge[0] + new_merge[1]
