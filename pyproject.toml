@@ -22,6 +22,7 @@ dependencies = [
     "scalene>=1.5.51",
     "sortedcontainers>=2.4.0",
     "heapdict>=1.0.1",
+    "invoke>=2.2.0",
 ]
 
 

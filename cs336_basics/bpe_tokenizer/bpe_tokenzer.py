@@ -55,7 +55,7 @@ class BPETokenizer:
         iterator = iter(iterable)
         buffer = next(iterator)
 
-        for _ in range(100):
+        while True:
             split_by_special_token = self._special_token_regex.split(buffer)
 
             for substr in split_by_special_token[:-1]:

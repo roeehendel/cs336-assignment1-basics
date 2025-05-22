@@ -15,3 +15,11 @@
 (b) The longest part is the pre-tokenization with ~30 seconds on 10 proccesses (iterating over the regex matches). However, the merges part is also ~30 seconds and non-parallizable.
 
 ## Problem (train_bpe_expts_owt): BPE Training on OpenWebText
+(a) The run took 1.5 hours, ~2-3GB RAM (estimated - need to verify). The longest token is `b'----------------------------------------------------------------'` with 64 bytes.
+(b) The TinyStories tokenizer includes mostly common english words and names. The OpenWebText tokenizer is more diverse, and includes terms like "www", "Google", "YouTube", "gov", etc.
+
+## Problem (tokenizer_experiments): Experiments with tokenizers
+(a) The compression ratio of the TinyStories tokenizer is 4.1 bytes per token. The compression ratio of OpenWebText tokenizer is 4.4 bytes per token.
+(b) The compression ration of OpenWebText using the TinyStories tokenizer is 3.3 bytes per token.
+(c) The throughput of the TinyStories tokenizer is about 4M tokens per second. It would take about 50 hours to tokenize the Pile using this tokenizer.
+(d) unit16 is an appropriate choice for storing token ids because they are integers between 0 and vocab_size - 1, and our largest vocab size is 32K which is less than the maximum value of a unit16, which is 65535.

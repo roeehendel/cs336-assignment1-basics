@@ -1,32 +1,18 @@
-import os
-
-from cs336_basics.bpe_tokenizer.bpe_tokenizer_training import train_bpe_fast
-from cs336_basics.bpe_tokenizer.serialization import load_merges, load_vocab, save_merges, save_vocab
-
-OUTPUTS_DIR = "outputs"
-OWT_OUTPUT_DIR = os.path.join(OUTPUTS_DIR, "owt")
-OWT_VOCAB_FILE = os.path.join(OWT_OUTPUT_DIR, "vocab.json")
-OWT_MERGES_FILE = os.path.join(OWT_OUTPUT_DIR, "merges.json")
+from scripts.bpe_tokenizer.tokenizer_training_utils import load_bpe_tokenizer, train_bpe_tokenizer
+from scripts.data.paths import OWT_TOKENIZER_DIR, OWT_TRAIN_FILE
 
 
-def train_bpe_tinystories():
-    vocab, merges = train_bpe_fast(
-        # input_path="data/owt_valid.txt",
-        input_path="data/owt_train.txt",
+def train_bpe_owt():
+    train_bpe_tokenizer(
+        input_path=OWT_TRAIN_FILE,
         vocab_size=32_000,
-        special_tokens=["<|endoftext|>"],
+        output_dir=OWT_TOKENIZER_DIR,
     )
 
-    os.makedirs(OWT_OUTPUT_DIR, exist_ok=True)
 
-    save_vocab(vocab, OWT_VOCAB_FILE)
-    save_merges(merges, OWT_MERGES_FILE)
-
-    loaded_vocab = load_vocab(OWT_VOCAB_FILE)
-    loaded_merges = load_merges(OWT_MERGES_FILE)
-    assert loaded_vocab == vocab
-    assert loaded_merges == merges
+def load_openwebtext_tokenizer():
+    return load_bpe_tokenizer(OWT_TOKENIZER_DIR)
 
 
 if __name__ == "__main__":
-    train_bpe_tinystories()
+    train_bpe_owt()
