@@ -156,6 +156,7 @@ class MultiHeadSelfAttention(nn.Module):
         values_per_head = self.rearrange_to_heads(values)
 
         if self.rope:
+            # TODO: does repeat actually copy and require more memory? if so - can we avoid this?
             token_positions = repeat(
                 torch.arange(0, sequence_length, device=self.device),
                 "position -> batch_size position",
@@ -296,12 +297,14 @@ class RoPE(nn.Module):
         self.theta = theta
         self.max_seq_len = max_seq_len
 
-        sequence_position, feature_position = torch.meshgrid(
+        self.rotation_group_size = 2
+
+        sequence_position, feature_group_position = torch.meshgrid(
             torch.arange(0, max_seq_len, device=device),
-            torch.arange(0, d_k // 2, device=device),
+            torch.arange(0, d_k // self.rotation_group_size, device=device),
             indexing="ij",
         )
-        angle = sequence_position / (theta ** ((2 * feature_position) / d_k))
+        angle = sequence_position / (theta ** ((self.rotation_group_size * feature_group_position) / d_k))
         cos = torch.cos(angle)
         sin = torch.sin(angle)
 
@@ -310,9 +313,9 @@ class RoPE(nn.Module):
 
     def forward(
         self,
-        in_query_or_key: Float[Tensor, "... seq_len d_k"],
+        in_query_or_key: Float[Tensor, "... seq_len d_kq"],
         token_positions: Int[Tensor, "... seq_len"],
-    ) -> Float[Tensor, "... seq_len d_k"]:
+    ) -> Float[Tensor, "... seq_len d_kq"]:
         cos = self.get_buffer("cos")
         sin = self.get_buffer("sin")
 
@@ -322,7 +325,7 @@ class RoPE(nn.Module):
         in_query_or_key_grouped = rearrange(
             in_query_or_key,
             "... (rotation_groups rotation_group_size) -> ... rotation_groups rotation_group_size",
-            rotation_group_size=2,
+            rotation_group_size=self.rotation_group_size,
         )
         in_query_or_key_grouped_rotated = einsum(
             rotations, in_query_or_key_grouped, "... group_out group_in, ... group_in -> ... group_out"
