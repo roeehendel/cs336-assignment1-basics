@@ -72,6 +72,28 @@ class TransformerLM(nn.Module):
         return x
 
 
+class Embedding(nn.Module):
+    def __init__(
+        self,
+        num_embeddings: int,
+        embedding_dim: int,
+        device: str | None = None,
+        dtype: torch.dtype | None = None,
+    ):
+        super().__init__()
+        self.weight: Float[Tensor, " num_embeddings embedding_dim"] = nn.Parameter(
+            data=get_truncated_normal_tensor(
+                size=(num_embeddings, embedding_dim),
+                std=1,
+                device=device,
+                dtype=dtype,
+            ),
+        )
+
+    def forward(self, token_ids: Int[Tensor, "..."]) -> Float[Tensor, "... embedding_dim"]:
+        return self.weight[token_ids]
+
+
 class TransformerBlock(nn.Module):
     def __init__(
         self,
@@ -193,96 +215,6 @@ class MultiHeadSelfAttention(nn.Module):
         )
 
 
-class Linear(nn.Module):
-    def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        device: str | None = None,
-        dtype: torch.dtype | None = None,
-    ):
-        super().__init__()
-        self.weight = nn.Parameter(
-            data=get_truncated_normal_tensor(
-                size=(out_features, in_features),
-                std=math.sqrt(2 / (in_features + out_features)),
-                device=device,
-                dtype=dtype,
-            ),
-        )
-
-    def forward(self, x: Float[Tensor, "... in_features"]) -> Float[Tensor, "... out_features"]:
-        return einsum(self.weight, x, "out_features in_features, ... in_features -> ... out_features")
-
-
-class Embedding(nn.Module):
-    def __init__(
-        self,
-        num_embeddings: int,
-        embedding_dim: int,
-        device: str | None = None,
-        dtype: torch.dtype | None = None,
-    ):
-        super().__init__()
-        self.weight: Float[Tensor, " num_embeddings embedding_dim"] = nn.Parameter(
-            data=get_truncated_normal_tensor(
-                size=(num_embeddings, embedding_dim),
-                std=1,
-                device=device,
-                dtype=dtype,
-            ),
-        )
-
-    def forward(self, token_ids: Int[Tensor, "..."]) -> Float[Tensor, "... embedding_dim"]:
-        return self.weight[token_ids]
-
-
-class RMSNorm(nn.Module):
-    def __init__(
-        self,
-        d_model: int,
-        eps: float = 1e-5,
-        device: str | None = None,
-        dtype: torch.dtype | None = None,
-    ):
-        super().__init__()
-        self.weight: Float[Tensor, " d_model"] = nn.Parameter(
-            data=get_truncated_normal_tensor(
-                size=(d_model,),
-                std=1,
-                device=device,
-                dtype=dtype,
-            ),
-        )
-        self.eps = eps
-
-    def forward(self, x: Float[Tensor, "... dim_model"]) -> Float[Tensor, "... dim_model"]:
-        in_dtype = x.dtype
-        x = x.to(torch.float32)
-
-        rms = torch.sqrt((x**2).mean(axis=-1, keepdims=True) + self.eps)
-        result = x / rms * self.weight
-
-        return result.to(in_dtype)
-
-
-class SwiGLU(nn.Module):
-    def __init__(
-        self,
-        d_model: int,
-        d_ff: int | None = None,
-        device: str | None = None,
-        dtype: torch.dtype | None = None,
-    ):
-        super().__init__()
-        self.w1 = Linear(in_features=d_model, out_features=d_ff, device=device, dtype=dtype)
-        self.w2 = Linear(in_features=d_ff, out_features=d_model, device=device, dtype=dtype)
-        self.w3 = Linear(in_features=d_model, out_features=d_ff, device=device, dtype=dtype)
-
-    def forward(self, x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
-        return self.w2(swish(self.w1(x)) * self.w3(x))
-
-
 class RoPE(nn.Module):
     def __init__(
         self,
@@ -359,8 +291,76 @@ def softmax(x: Float[Tensor, "..."], dim: int) -> Float[Tensor, "..."]:
     return exp_x / exp_x.sum(dim=dim, keepdim=True)
 
 
+class SwiGLU(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        d_ff: int | None = None,
+        device: str | None = None,
+        dtype: torch.dtype | None = None,
+    ):
+        super().__init__()
+        self.w1 = Linear(in_features=d_model, out_features=d_ff, device=device, dtype=dtype)
+        self.w2 = Linear(in_features=d_ff, out_features=d_model, device=device, dtype=dtype)
+        self.w3 = Linear(in_features=d_model, out_features=d_ff, device=device, dtype=dtype)
+
+    def forward(self, x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
+        return self.w2(swish(self.w1(x)) * self.w3(x))
+
+
 def swish(x: Float[Tensor, "..."]) -> Float[Tensor, "..."]:
     return x * torch.sigmoid(x)
+
+
+class Linear(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        device: str | None = None,
+        dtype: torch.dtype | None = None,
+    ):
+        super().__init__()
+        self.weight = nn.Parameter(
+            data=get_truncated_normal_tensor(
+                size=(out_features, in_features),
+                std=math.sqrt(2 / (in_features + out_features)),
+                device=device,
+                dtype=dtype,
+            ),
+        )
+
+    def forward(self, x: Float[Tensor, "... in_features"]) -> Float[Tensor, "... out_features"]:
+        return einsum(self.weight, x, "out_features in_features, ... in_features -> ... out_features")
+
+
+class RMSNorm(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        eps: float = 1e-5,
+        device: str | None = None,
+        dtype: torch.dtype | None = None,
+    ):
+        super().__init__()
+        self.weight: Float[Tensor, " d_model"] = nn.Parameter(
+            data=get_truncated_normal_tensor(
+                size=(d_model,),
+                std=1,
+                device=device,
+                dtype=dtype,
+            ),
+        )
+        self.eps = eps
+
+    def forward(self, x: Float[Tensor, "... dim_model"]) -> Float[Tensor, "... dim_model"]:
+        in_dtype = x.dtype
+        x = x.to(torch.float32)
+
+        rms = torch.sqrt((x**2).mean(axis=-1, keepdims=True) + self.eps)
+        result = x / rms * self.weight
+
+        return result.to(in_dtype)
 
 
 def get_truncated_normal_tensor(
