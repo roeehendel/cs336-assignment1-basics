@@ -369,8 +369,8 @@ def get_truncated_normal_tensor(
     std: float = 1.0,
     min_value: float | None = None,
     max_value: float | None = None,
-    device: str = None,
-    dtype: torch.dtype = None,
+    device: str | None = None,
+    dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     return nn.init.trunc_normal_(
         torch.empty(size, device=device, dtype=dtype),

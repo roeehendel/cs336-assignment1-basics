@@ -11,7 +11,7 @@ from torch import Tensor
 
 from cs336_basics.bpe_tokenizer.bpe_tokenizer_training import train_bpe_fast
 from cs336_basics.bpe_tokenizer.bpe_tokenzer import BPETokenizer
-from cs336_basics.modelling.transformer_lm import (
+from cs336_basics.models.transformer_lm import (
     Embedding,
     Linear,
     MultiHeadSelfAttention,
