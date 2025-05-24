@@ -163,6 +163,6 @@ cython_debug/
 *.zip
 
 # development outputs
-data/
-profiling/
-output/token_ids/
+/data/
+/profiling/
+/output/token_ids/
