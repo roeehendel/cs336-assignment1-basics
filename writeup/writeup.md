@@ -109,3 +109,6 @@
 
 - lm_head_flops=2.63 (1.76%)
 
+## Problem (learning_rate_tuning): Tuning the learning rate
+The loss decays faster as the learning rate grows from 1 to 100, but at 1000 it diverges.
+
