@@ -23,6 +23,7 @@ from cs336_basics.models.transformer_lm import (
     scaled_dot_product_attention,
     softmax,
 )
+from cs336_basics.training.adamw import AdamW
 from cs336_basics.training.losses import cross_entropy
 
 
@@ -545,7 +546,7 @@ def get_adamw_cls() -> type[torch.optim.Optimizer]:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
