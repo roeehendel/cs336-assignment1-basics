@@ -162,7 +162,8 @@ cython_debug/
 .ruff_cache/
 *.zip
 
-# development outputs
+# development
+.env
 /data/
 /profiling/
 /output/token_ids/

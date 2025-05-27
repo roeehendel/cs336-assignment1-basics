@@ -22,6 +22,7 @@ from cs336_basics.models.transformer_lm import (
     TransformerLM,
     scaled_dot_product_attention,
     softmax,
+    swish,
 )
 from cs336_basics.training.losses import cross_entropy
 from cs336_basics.training.lr_schedulers import lr_cosine_schedule
@@ -106,9 +107,9 @@ def run_swiglu(
     swiglu = SwiGLU(d_model=d_model, d_ff=d_ff)
     swiglu.load_state_dict(
         {
-            "linear1.weights": w1_weight,
-            "linear2.weights": w2_weight,
-            "linear3.weights": w3_weight,
+            "w1.weight": w1_weight,
+            "w2.weight": w2_weight,
+            "w3.weight": w3_weight,
         }
     )
     return swiglu(in_features)
@@ -172,10 +173,10 @@ def run_multihead_self_attention(
     )
     mhsa.load_state_dict(
         {
-            "w_q.weights": q_proj_weight,
-            "w_k.weights": k_proj_weight,
-            "w_v.weights": v_proj_weight,
-            "w_o.weights": o_proj_weight,
+            "q_proj.weight": q_proj_weight,
+            "k_proj.weight": k_proj_weight,
+            "v_proj.weight": v_proj_weight,
+            "output_proj.weight": o_proj_weight,
         }
     )
     return mhsa(in_features)
@@ -226,10 +227,10 @@ def run_multihead_self_attention_with_rope(
     )
     mhsa.load_state_dict(
         {
-            "w_q.weights": q_proj_weight,
-            "w_k.weights": k_proj_weight,
-            "w_v.weights": v_proj_weight,
-            "w_o.weights": o_proj_weight,
+            "q_proj.weight": q_proj_weight,
+            "k_proj.weight": k_proj_weight,
+            "v_proj.weight": v_proj_weight,
+            "output_proj.weight": o_proj_weight,
         }
     )
     return mhsa(in_features)
@@ -456,7 +457,7 @@ def run_rmsnorm(
         RMSNorm of the `in_features`.
     """
     rms_norm = RMSNorm(d_model=d_model, eps=eps)
-    rms_norm.load_state_dict({"gains": weights})
+    rms_norm.load_state_dict({"weight": weights})
     return rms_norm(in_features)
 
 
@@ -471,7 +472,7 @@ def run_silu(in_features: Float[Tensor, "..."]) -> Float[Tensor, "..."]:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
     """
-    raise NotImplementedError
+    return swish(in_features)
 
 
 def run_get_batch(

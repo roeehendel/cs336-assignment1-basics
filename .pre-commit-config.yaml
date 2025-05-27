@@ -3,6 +3,6 @@ repos:
     hooks:
       - id: pre-commit-tests
         name: Pre-commit tests
-        entry: bash -c 'pytest $(cat .pre-commit-test-files)'
+        entry: bash -c 'pytest $(cat .implemented-test-files)'
         language: system
         pass_filenames: false

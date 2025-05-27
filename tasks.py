@@ -1,11 +1,11 @@
 import os
 from datetime import datetime
 
-from invoke import task
+from invoke import Context, task
 
 
 @task
-def profile(c, script_path):
+def profile(c: Context, script_path: str) -> None:
     """Profile a script using viztracer."""
 
     script_filename = os.path.basename(script_path)
@@ -23,3 +23,14 @@ def profile(c, script_path):
         f"-o {output_path} "
         f"{script_path}"
     )
+
+
+@task
+def test(c: Context, profile: bool = False) -> None:
+    """Run the tests."""
+    command = "uv run pytest $(cat .implemented-test-files)"
+
+    if profile:
+        command += " --durations=10"
+
+    c.run(command, pty=True)
