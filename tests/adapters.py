@@ -24,6 +24,7 @@ from cs336_basics.models.transformer_lm import (
     softmax,
     swish,
 )
+from cs336_basics.training.gradient_clipping import gradient_clipping
 from cs336_basics.training.losses import cross_entropy
 from cs336_basics.training.lr_schedulers import lr_cosine_schedule
 from cs336_basics.training.optimizers.adamw import AdamW
@@ -541,7 +542,7 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    return gradient_clipping(parameters, max_l2_norm)
 
 
 def get_adamw_cls() -> type[torch.optim.Optimizer]:
