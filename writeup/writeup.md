@@ -112,3 +112,8 @@
 ## Problem (learning_rate_tuning): Tuning the learning rate
 The loss decays faster as the learning rate grows from 1 to 100, but at 1000 it diverges.
 
+## Problem (adamwAccounting): Resource accounting for training with AdamW
+(a) Can be found in [training/adamw_resource_accounting.ipynb](training/adamw_resource_accounting.ipynb)
+(b) Total memory usage in GB = 31.69 + 15.43 * batch_size. Max batch size in 80GB memory is 3.
+(c) The number of FLOPs for a single step of AdamW is rougly num_params * 10 (there are about 10 pointwise operations operating on all tensors of the size of the parameters). For our gpt-2-xl, with about 2B params, this is roughly 20 GFLOPs.
+(d) For 400K steps with a batch size of 1024, the total number of training examples is 400M. Each example takes 4.5e12 FLOPs for the forward pass, and assuming the backward takes twice as much - we have another 9.0e12 FLOPs. So overall 13.5e12 FLOPs per example. For all examples, this amounts to about 5.4e21 FLOPs. Assuming a single A100, training with float32 at 50% MFU, we have 10 TFLOP/s. So the total time would be 6250 days.

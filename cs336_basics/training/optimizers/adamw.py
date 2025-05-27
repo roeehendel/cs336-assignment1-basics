@@ -42,7 +42,7 @@ class AdamW(torch.optim.Optimizer):
                 lr = base_lr * math.sqrt(1 - beta2**t) / (1 - beta1**t)
 
                 p.data -= lr * first_moment / (torch.sqrt(second_moment) + eps)
-                p.data -= base_lr * weight_decay * p.data
+                p.data -= (base_lr * weight_decay) * p.data
 
                 state["t"] = t + 1
                 state["first_moment"] = first_moment
