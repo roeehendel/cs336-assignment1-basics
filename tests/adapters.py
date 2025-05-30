@@ -24,6 +24,7 @@ from cs336_basics.models.transformer_lm import (
     softmax,
     swish,
 )
+from cs336_basics.training.checkpointing import load_checkpoint, save_checkpoint
 from cs336_basics.training.gradient_clipping import gradient_clipping
 from cs336_basics.training.losses import cross_entropy
 from cs336_basics.training.lr_schedulers import lr_cosine_schedule
@@ -603,7 +604,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    raise NotImplementedError
+    save_checkpoint(model=model, optimizer=optimizer, iteration=iteration, out=out)
 
 
 def run_load_checkpoint(
@@ -624,7 +625,7 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
-    raise NotImplementedError
+    return load_checkpoint(src=src, model=model, optimizer=optimizer)
 
 
 def get_tokenizer(
