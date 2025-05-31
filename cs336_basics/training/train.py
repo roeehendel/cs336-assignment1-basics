@@ -32,6 +32,8 @@ def train(cfg: ExperimentConfig):
     model = model.to(cfg.training.device)
     # model = torch.compile(model, backend="aot_eager")
 
+    # wandb.watch(model, log="all", log_freq=100)
+
     train_dataset = np.load(cfg.data.train_path, mmap_mode="r")
     validation_dataset = np.load(cfg.data.valid_path, mmap_mode="r")
 

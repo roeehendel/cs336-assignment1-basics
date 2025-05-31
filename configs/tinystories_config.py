@@ -1,4 +1,4 @@
-"""Tiny model configuration for fast experimentation."""
+"""Configuration for training a TinyStories model."""
 
 from configs.tinystories_data_config import TINYSTORIES_DATA_CONFIG
 from cs336_basics.models.transformer_lm_config import TransformerLMConfig
@@ -44,9 +44,9 @@ config = ExperimentConfig(
         weight_decay=0.01,
     ),
     lr_scheduler=CosineAnnealingConfig(
-        max_lr=0.003,
-        min_lr=0.0003,
-        warmup_fraction=0.1,
+        max_lr=2e-3,
+        min_lr=5e-5,
+        warmup_fraction=0.05,
         annealing_fraction=1.0,
     ),
     checkpointing=CheckpointingConfig(
@@ -55,5 +55,6 @@ config = ExperimentConfig(
     ),
     logging=LoggingConfig(
         wandb=True,
+        console=True,
     ),
 )

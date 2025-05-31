@@ -18,9 +18,10 @@ config = ExperimentConfig(
         context_length=32,
         total_tokens=32 * 8 * 1000,
         batch_size=8,
+        device_batch_size=8,
         # device="cpu",
         device="mps",
-        single_batch_for_debug=False,
+        # single_batch_for_debug=True,
     ),
     validation=ValidationConfig(
         every_n_steps=200,
