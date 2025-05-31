@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 source "$(dirname "$0")/common.sh"
 
 gcloud compute instances create cs336-dev \
@@ -7,3 +7,5 @@ gcloud compute instances create cs336-dev \
   --accelerator=count=1,type=nvidia-tesla-t4 \
   --maintenance-policy=TERMINATE --preemptible \
   "${BOOT_FLAGS[@]}"
+
+gcloud compute config-ssh --project="$(gcloud config get-value project)"

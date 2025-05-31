@@ -5,6 +5,6 @@ export REGION="me-west1"
 
 export DATA_DISK="data-disk"
 export DATA_DISK_SIZE="200GB"
-export BOOT_DISK_SIZE="50GB"
+export BOOT_DISK_SIZE="200GB"
 
 export SHUTDOWN_HOURS=8           # auto-halt time

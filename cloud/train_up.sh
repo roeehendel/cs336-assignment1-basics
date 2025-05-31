@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 source "$(dirname "$0")/common.sh"
 
 gcloud compute instances create cs336-train \

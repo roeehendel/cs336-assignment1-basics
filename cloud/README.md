@@ -7,8 +7,13 @@ Run:
     ./bootstrap_local.sh          # installs gcloud, chooses project & zone, adds budget alert
     ./cloud/init.sh               # creates shared data disk, opens GPU-quota request page
 
-Then request **1 T4** and **1 A100-40GB** quota in your zone (`me-west1-b` recommended).  
-Wait for the approval email (usually under 24 hours).
+Then request **1 T4** and **1 A100-40GB** quota in your zone (`me-west1-b` recommended in Israel).  
+Wait for the approval.
+
+Run:
+    ./cloud/dev_up.sh
+    gcloud compute config-ssh --project=$(gcloud config get-value project)
+    
 
 ---
 
