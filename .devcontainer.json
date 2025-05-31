@@ -1,0 +1,18 @@
+{
+    "name": "CS336",
+    "build": {
+        "dockerfile": "docker/Dockerfile"
+    },
+    "workspaceFolder": "/workspace",
+    "runArgs": [
+        "--gpus",
+        "all",
+        "-v",
+        "/mnt/data:/workspace"
+    ],
+    "extensions": [
+        "ms-python.python",
+        "ms-azuretools.vscode-docker",
+        "foxundermoon.shell-format"
+    ]
+}
