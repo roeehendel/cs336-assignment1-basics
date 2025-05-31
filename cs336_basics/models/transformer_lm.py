@@ -3,59 +3,49 @@ from collections.abc import Sequence
 from typing import Union
 
 import torch
-from einops import einsum, parse_shape, rearrange, repeat
+from einops import einsum, parse_shape, rearrange
 from jaxtyping import Float, Int
 from torch import Tensor, nn
+
+from cs336_basics.models.transformer_lm_config import TransformerLMConfig
 
 
 class TransformerLM(nn.Module):
     def __init__(
         self,
-        vocab_size: int,
-        context_length: int,
-        d_model: int,
-        num_layers: int,
-        num_heads: int,
-        d_ff: int,
-        rope_theta: float,
-        device: str | None = None,
+        cfg: TransformerLMConfig,
         dtype: torch.dtype | None = None,
     ):
         super().__init__()
         self.token_embeddings = Embedding(
-            num_embeddings=vocab_size,
-            embedding_dim=d_model,
-            device=device,
+            num_embeddings=cfg.vocab_size,
+            embedding_dim=cfg.d_model,
             dtype=dtype,
         )
         rope = RoPE(
-            theta=rope_theta,
-            d_k=d_model // num_heads,
-            max_seq_len=context_length,
-            device=device,
+            theta=cfg.rope_theta,
+            d_k=cfg.d_model // cfg.num_heads,
+            max_seq_len=cfg.context_length,
         )
         self.layers = nn.ModuleList(
             [
                 TransformerBlock(
-                    d_model=d_model,
-                    num_heads=num_heads,
-                    d_ff=d_ff,
+                    d_model=cfg.d_model,
+                    num_heads=cfg.num_heads,
+                    d_ff=cfg.d_ff,
                     rope=rope,
-                    device=device,
                     dtype=dtype,
                 )
-                for _ in range(num_layers)
+                for _ in range(cfg.num_layers)
             ]
         )
         self.ln_final = RMSNorm(
-            d_model=d_model,
-            device=device,
+            d_model=cfg.d_model,
             dtype=dtype,
         )
         self.lm_head = Linear(
-            in_features=d_model,
-            out_features=vocab_size,
-            device=device,
+            in_features=cfg.d_model,
+            out_features=cfg.vocab_size,
             dtype=dtype,
         )
 
@@ -77,7 +67,6 @@ class Embedding(nn.Module):
         self,
         num_embeddings: int,
         embedding_dim: int,
-        device: str | None = None,
         dtype: torch.dtype | None = None,
     ):
         super().__init__()
@@ -85,7 +74,6 @@ class Embedding(nn.Module):
             data=get_truncated_normal_tensor(
                 size=(num_embeddings, embedding_dim),
                 std=1,
-                device=device,
                 dtype=dtype,
             ),
         )
@@ -101,27 +89,23 @@ class TransformerBlock(nn.Module):
         num_heads: int,
         d_ff: int,
         rope: Union["RoPE", None] = None,
-        device: str | None = None,
         dtype: torch.dtype | None = None,
     ):
         super().__init__()
         self.attn = MultiHeadSelfAttention(
             d_model=d_model,
             num_heads=num_heads,
-            device=device,
             dtype=dtype,
             rope=rope,
         )
         self.ffn = SwiGLU(
             d_model=d_model,
             d_ff=d_ff,
-            device=device,
             dtype=dtype,
         )
         self.ln1, self.ln2 = (
             RMSNorm(
                 d_model=d_model,
-                device=device,
                 dtype=dtype,
             )
             for _ in range(2)
@@ -142,7 +126,6 @@ class MultiHeadSelfAttention(nn.Module):
         d_model: int,
         num_heads: int,
         rope: Union["RoPE", None] = None,
-        device: str | None = None,
         dtype: torch.dtype | None = None,
     ):
         super().__init__()
@@ -152,21 +135,30 @@ class MultiHeadSelfAttention(nn.Module):
         self.num_heads = num_heads
         self.d = d_model // num_heads
 
-        self.q_proj = Linear(in_features=d_model, out_features=d_model, device=device, dtype=dtype)
-        self.k_proj = Linear(in_features=d_model, out_features=d_model, device=device, dtype=dtype)
-        self.v_proj = Linear(in_features=d_model, out_features=d_model, device=device, dtype=dtype)
-        self.output_proj = Linear(in_features=d_model, out_features=d_model, device=device, dtype=dtype)
-
-        self.device = device
+        self.q_proj = Linear(in_features=d_model, out_features=d_model, dtype=dtype)
+        self.k_proj = Linear(in_features=d_model, out_features=d_model, dtype=dtype)
+        self.v_proj = Linear(in_features=d_model, out_features=d_model, dtype=dtype)
+        self.output_proj = Linear(in_features=d_model, out_features=d_model, dtype=dtype)
 
         self.rope = rope
+
+        if rope:
+            self.register_buffer(
+                "token_positions",
+                torch.arange(rope.max_seq_len, device=self.device),
+                persistent=False,
+            )
+
+    @property
+    def device(self) -> torch.device:
+        """Get the device of this module's parameters."""
+        return next(self.parameters()).device
 
     def forward(
         self,
         in_features: Float[Tensor, "... sequence_length d_model"],
     ) -> Float[Tensor, "... sequence_length d_model"]:
         input_shape = parse_shape(in_features, "batch_size ... sequence_length d_model")
-        batch_size = input_shape["batch_size"]
         sequence_length = input_shape["sequence_length"]
 
         queries = self.q_proj(in_features)
@@ -178,12 +170,7 @@ class MultiHeadSelfAttention(nn.Module):
         values_per_head = self.rearrange_to_heads(values)
 
         if self.rope:
-            # TODO: does repeat actually copy and require more memory? if so - can we avoid this?
-            token_positions = repeat(
-                torch.arange(0, sequence_length, device=self.device),
-                "position -> batch_size position",
-                batch_size=batch_size,
-            )
+            token_positions = self.get_buffer("token_positions")[:sequence_length]
             queries_per_head = self.rope.forward(queries_per_head, token_positions=token_positions)
             keys_per_head = self.rope.forward(keys_per_head, token_positions=token_positions)
 
@@ -221,7 +208,6 @@ class RoPE(nn.Module):
         theta: float,
         d_k: int,
         max_seq_len: int,
-        device: str | None = None,
     ):
         super().__init__()
 
@@ -232,8 +218,8 @@ class RoPE(nn.Module):
         self.rotation_group_size = 2
 
         sequence_position, feature_group_position = torch.meshgrid(
-            torch.arange(0, max_seq_len, device=device),
-            torch.arange(0, d_k // self.rotation_group_size, device=device),
+            torch.arange(0, max_seq_len),
+            torch.arange(0, d_k // self.rotation_group_size),
             indexing="ij",
         )
         angle = sequence_position / (theta ** ((self.rotation_group_size * feature_group_position) / d_k))
@@ -296,13 +282,12 @@ class SwiGLU(nn.Module):
         self,
         d_model: int,
         d_ff: int | None = None,
-        device: str | None = None,
         dtype: torch.dtype | None = None,
     ):
         super().__init__()
-        self.w1 = Linear(in_features=d_model, out_features=d_ff, device=device, dtype=dtype)
-        self.w2 = Linear(in_features=d_ff, out_features=d_model, device=device, dtype=dtype)
-        self.w3 = Linear(in_features=d_model, out_features=d_ff, device=device, dtype=dtype)
+        self.w1 = Linear(in_features=d_model, out_features=d_ff, dtype=dtype)
+        self.w2 = Linear(in_features=d_ff, out_features=d_model, dtype=dtype)
+        self.w3 = Linear(in_features=d_model, out_features=d_ff, dtype=dtype)
 
     def forward(self, x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
         return self.w2(swish(self.w1(x)) * self.w3(x))
@@ -317,7 +302,6 @@ class Linear(nn.Module):
         self,
         in_features: int,
         out_features: int,
-        device: str | None = None,
         dtype: torch.dtype | None = None,
     ):
         super().__init__()
@@ -325,7 +309,6 @@ class Linear(nn.Module):
             data=get_truncated_normal_tensor(
                 size=(out_features, in_features),
                 std=math.sqrt(2 / (in_features + out_features)),
-                device=device,
                 dtype=dtype,
             ),
         )
@@ -339,7 +322,6 @@ class RMSNorm(nn.Module):
         self,
         d_model: int,
         eps: float = 1e-5,
-        device: str | None = None,
         dtype: torch.dtype | None = None,
     ):
         super().__init__()
@@ -347,7 +329,6 @@ class RMSNorm(nn.Module):
             data=get_truncated_normal_tensor(
                 size=(d_model,),
                 std=1,
-                device=device,
                 dtype=dtype,
             ),
         )

@@ -24,12 +24,13 @@ from cs336_basics.models.transformer_lm import (
     softmax,
     swish,
 )
+from cs336_basics.models.transformer_lm_config import TransformerLMConfig
 from cs336_basics.training.checkpointing import load_checkpoint, save_checkpoint
+from cs336_basics.training.dataloading import get_batch
 from cs336_basics.training.gradient_clipping import gradient_clipping
 from cs336_basics.training.losses import cross_entropy
 from cs336_basics.training.lr_schedulers import lr_cosine_schedule
 from cs336_basics.training.optimizers.adamw import AdamW
-from cs336_basics.training.trainer import get_batch
 
 
 def run_linear(
@@ -427,13 +428,15 @@ def run_transformer_lm(
         next-word distribution for each token.
     """
     model = TransformerLM(
-        vocab_size=vocab_size,
-        context_length=context_length,
-        d_model=d_model,
-        num_layers=num_layers,
-        num_heads=num_heads,
-        d_ff=d_ff,
-        rope_theta=rope_theta,
+        cfg=TransformerLMConfig(
+            vocab_size=vocab_size,
+            context_length=context_length,
+            d_model=d_model,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            d_ff=d_ff,
+            rope_theta=rope_theta,
+        ),
     )
     model.load_state_dict(weights)
     return model(in_indices)
