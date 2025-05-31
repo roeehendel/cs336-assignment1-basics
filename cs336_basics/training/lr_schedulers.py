@@ -1,7 +1,17 @@
 import math
 
 
-def lr_cosine_schedule(step: int, max_lr: float, min_lr: float, warmup_last_step: int, annealing_last_step: int):
+def lr_cosine_schedule(
+    step: int,
+    max_lr: float,
+    min_lr: float,
+    num_steps: int,
+    warmup_fraction: float,
+    annealing_fraction: float,
+) -> float:
+    warmup_last_step = round(num_steps * warmup_fraction)
+    annealing_last_step = round(num_steps * annealing_fraction)
+
     if step < warmup_last_step:
         return (step / warmup_last_step) * max_lr
     elif warmup_last_step <= step < annealing_last_step:

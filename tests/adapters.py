@@ -582,12 +582,17 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
+    total_steps = cosine_cycle_iters
+    warmup_fraction = warmup_iters / total_steps
+    annealing_fraction = cosine_cycle_iters / total_steps
+
     return lr_cosine_schedule(
         step=it,
         max_lr=max_learning_rate,
         min_lr=min_learning_rate,
-        warmup_last_step=warmup_iters,
-        annealing_last_step=cosine_cycle_iters,
+        num_steps=total_steps,
+        warmup_fraction=warmup_fraction,
+        annealing_fraction=annealing_fraction,
     )
 
 
