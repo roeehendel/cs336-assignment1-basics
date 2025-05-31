@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from cs336_basics.bpe_tokenizer.types import FilePath
 from cs336_basics.models.transformer_lm import TransformerLMConfig
@@ -14,13 +14,19 @@ class DataConfig(BaseModel):
 class TrainingConfig(BaseModel):
     context_length: int
 
-    num_steps: int
+    total_tokens: int
 
     batch_size: int
+    device_batch_size: int
 
     device: str
 
     single_batch_for_debug: bool = False
+
+    @computed_field
+    @property
+    def num_steps(self) -> int:
+        return self.total_tokens // (self.batch_size * self.context_length)
 
 
 class ValidationConfig(BaseModel):
@@ -47,11 +53,6 @@ class CosineAnnealingConfig(BaseModel):
     annealing_fraction: float
 
 
-class OptimizationConfig(BaseModel):
-    optimizer: AdamWConfig
-    scheduler: CosineAnnealingConfig
-
-
 class LoggingConfig(BaseModel):
     wandb: bool = False
     console: bool = True
@@ -62,6 +63,7 @@ class ExperimentConfig(BaseModel):
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
     model: TransformerLMConfig = Field(default_factory=TransformerLMConfig)
-    optimization: OptimizationConfig = Field(default_factory=OptimizationConfig)
+    optimizer: AdamWConfig
+    lr_scheduler: CosineAnnealingConfig
     checkpointing: CheckpointingConfig = Field(default_factory=CheckpointingConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

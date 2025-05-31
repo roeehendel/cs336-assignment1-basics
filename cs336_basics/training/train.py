@@ -1,12 +1,12 @@
 import importlib
 import os
 import sys
+import time
 from functools import partial
 
 import numpy as np
 import torch
-from jaxtyping import Int
-from torch import Tensor
+from tqdm import tqdm
 
 import wandb
 from cs336_basics.bpe_tokenizer.bpe_tokenzer import BPETokenizer
@@ -26,52 +26,24 @@ def train(cfg: ExperimentConfig):
     _init_logging(cfg)
 
     model = TransformerLM(cfg=cfg.model)
-    optimizer = AdamW(model.parameters(), **cfg.optimization.optimizer.model_dump())
-    lr_scheduler = partial(
-        lr_cosine_schedule, **cfg.optimization.scheduler.model_dump(), num_steps=cfg.training.num_steps
-    )
+    optimizer = AdamW(model.parameters(), **cfg.optimizer.model_dump())
+    lr_scheduler = partial(lr_cosine_schedule, **cfg.lr_scheduler.model_dump(), num_steps=cfg.training.num_steps)
 
     model = model.to(cfg.training.device)
+    # model = torch.compile(model, backend="aot_eager")
 
     train_dataset = np.load(cfg.data.train_path, mmap_mode="r")
     validation_dataset = np.load(cfg.data.valid_path, mmap_mode="r")
 
     tokenizer = load_bpe_tokenizer(cfg.data.tokenizer_path)
 
-    for step in range(cfg.training.num_steps):
-        optimizer.zero_grad()
+    for step in tqdm(range(cfg.training.num_steps)):
+        last_step = step == cfg.training.num_steps - 1
 
-        lr = lr_scheduler(step=step)
-        for param_group in optimizer.param_groups:
-            param_group["lr"] = lr
-
-        input_token_ids, output_token_ids = get_batch(
-            dataset=train_dataset,
-            batch_size=cfg.training.batch_size,
-            context_length=cfg.training.context_length,
-            device=cfg.training.device,
-            single_batch_for_debug=cfg.training.single_batch_for_debug,
+        should_checkpoint = (
+            step > 0 and cfg.checkpointing.every_n_steps and (step % cfg.checkpointing.every_n_steps == 0 or last_step)
         )
-
-        logits = model.forward(token_ids=input_token_ids)
-
-        loss = cross_entropy(logits=logits, targets=output_token_ids)
-        perplexity = torch.exp(loss)
-
-        loss.backward()
-        optimizer.step()
-
-        _write_log(
-            cfg=cfg,
-            step=step,
-            data={
-                "train/loss": loss.item(),
-                "train/perplexity": perplexity.item(),
-                "train/lr": lr,
-            },
-        )
-
-        if cfg.checkpointing.every_n_steps and step % cfg.checkpointing.every_n_steps == 0:
+        if should_checkpoint:
             os.makedirs(cfg.checkpointing.dir, exist_ok=True)
             checkpoint_path = os.path.join(cfg.checkpointing.dir, f"checkpoint_{step}.pt")
             save_checkpoint(
@@ -81,10 +53,59 @@ def train(cfg: ExperimentConfig):
                 out=checkpoint_path,
             )
 
-        if cfg.validation.every_n_steps and step % cfg.validation.every_n_steps == 0:
+        should_validate = cfg.validation.every_n_steps and (step % cfg.validation.every_n_steps == 0 or last_step)
+        if should_validate:
+            start_time = time.time()
             _validate(model=model, dataset=validation_dataset, cfg=cfg, step=step)
+            end_time = time.time()
+            validation_time = end_time - start_time
+            tqdm.write(f"Validation time: {validation_time} seconds")
             # TODO: consider separating generation from validation
-            _generate(cfg=cfg, step=step, model=model, tokenizer=tokenizer, input_token_ids=input_token_ids)
+            if step > 0:
+                start_time = time.time()
+                _generate(cfg=cfg, step=step, model=model, tokenizer=tokenizer)
+                end_time = time.time()
+                generation_time = end_time - start_time
+                tqdm.write(f"Generation time: {generation_time} seconds")
+
+        device_batch_size = 16
+        accumulation_steps = cfg.training.batch_size // device_batch_size
+
+        optimizer.zero_grad()
+        start_time = time.time()
+        for accumulation_step in range(accumulation_steps):
+            input_token_ids, output_token_ids = get_batch(
+                dataset=train_dataset,
+                batch_size=device_batch_size,
+                context_length=cfg.training.context_length,
+                device=cfg.training.device,
+                single_batch_for_debug=cfg.training.single_batch_for_debug,
+            )
+
+            logits = model.forward(token_ids=input_token_ids)
+            loss = cross_entropy(logits=logits, targets=output_token_ids)
+            loss.backward()
+
+        end_time = time.time()
+        batch_time = end_time - start_time
+        batch_num_tokens = cfg.training.batch_size * cfg.training.context_length
+
+        lr = lr_scheduler(step=step)
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = lr
+        optimizer.step()
+
+        perplexity = torch.exp(loss)
+        _write_log(
+            cfg=cfg,
+            step=step,
+            data={
+                "train/loss": loss.item(),
+                "train/perplexity": perplexity.item(),
+                "train/lr": lr,
+                "train/tokens_per_second": int(batch_num_tokens / batch_time),
+            },
+        )
 
 
 def _init_logging(cfg: ExperimentConfig):
@@ -100,7 +121,7 @@ def _write_log(cfg: ExperimentConfig, step: int, data: dict):
     if cfg.logging.wandb:
         wandb.log(data, step=step)
     if cfg.logging.console:
-        print(f"Step {step} {data}")
+        tqdm.write(f"Step {step}/{cfg.training.num_steps - 1} {data}")
 
 
 def _generate(
@@ -108,14 +129,11 @@ def _generate(
     step: int,
     model: TransformerLM,
     tokenizer: BPETokenizer,
-    input_token_ids: Int[Tensor, " batch_size context_length"],
 ):
-    prompt = tokenizer.decode(input_token_ids[0].tolist()[:1]) if cfg.training.single_batch_for_debug else None
     generated_text = lm_generate(
         model=model,
         tokenizer=tokenizer,
         end_of_text_token=cfg.data.end_of_text_token,
-        prompt=prompt,
         max_tokens=cfg.training.context_length,
         temperature=0.1,
         top_p=0.1,

@@ -15,26 +15,27 @@ from cs336_basics.training.train_config import (
 config = ExperimentConfig(
     data=TINYSTORIES_DATA_CONFIG,
     training=TrainingConfig(
-        context_length=32,
-        total_tokens=32 * 8 * 1000,
-        batch_size=8,
+        context_length=256,
+        # total_tokens=327_680_000,
+        total_tokens=40_000_000,
+        batch_size=32,
+        device_batch_size=8,
         # device="cpu",
         device="mps",
-        single_batch_for_debug=False,
+        # single_batch_for_debug=True,
     ),
     validation=ValidationConfig(
         every_n_steps=200,
-        iterations=4,
+        iterations=32,
         batch_size=8,
     ),
     model=TransformerLMConfig(
         vocab_size=10_000,
-        # vocab_size=32_000,
-        context_length=32,
-        d_model=256,
-        num_layers=2,
-        num_heads=4,
-        d_ff=256,
+        context_length=256,
+        d_model=512,
+        num_layers=4,
+        num_heads=16,
+        d_ff=1344,
         rope_theta=10000,
     ),
     optimizer=AdamWConfig(
@@ -49,7 +50,7 @@ config = ExperimentConfig(
         annealing_fraction=1.0,
     ),
     checkpointing=CheckpointingConfig(
-        dir="output/checkpoints/debug",
+        dir="output/checkpoints/tinystories",
         every_n_steps=1000,
     ),
     logging=LoggingConfig(
