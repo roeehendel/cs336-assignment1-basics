@@ -28,7 +28,7 @@ def profile(c: Context, script_path: str) -> None:
 @task
 def test(c: Context, profile: bool = False) -> None:
     """Run the tests."""
-    command = "uv run pytest $(cat .implemented-test-files)"
+    command = "uv run pytest ."
 
     if profile:
         command += " --durations=10"

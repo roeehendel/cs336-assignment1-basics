@@ -1,8 +1,19 @@
 repos:
   - repo: local
     hooks:
+      - id: ruff-check
+        name: Ruff check
+        entry: ruff check
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: Ruff format
+        entry: ruff format
+        language: system
+        types: [python]
       - id: pre-commit-tests
         name: Pre-commit tests
-        entry: bash -c 'pytest $(cat .implemented-test-files)'
+        entry: pytest
         language: system
         pass_filenames: false
+        files: \.py$
