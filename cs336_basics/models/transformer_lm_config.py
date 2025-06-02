@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TransformerLMConfig(BaseModel):
@@ -8,4 +8,4 @@ class TransformerLMConfig(BaseModel):
     num_layers: int
     num_heads: int
     d_ff: int
-    rope_theta: float
+    rope_theta: float = Field(default=10000)
