@@ -1,5 +1,9 @@
-# -------- Budget alert (optional but recommended) -------------------
-# Will e-mail you when 250 USD of the free-trial credit is consumed.
+#!/bin/bash
+# Budget alert setup - warns when 250 USD of free-trial credit is consumed
+
+set -e
+
+PROJECT_ID=$(gcloud config get-value project)
 
 # Find the billing account tied to the current project
 BILLING_ACCOUNT_ID=$(

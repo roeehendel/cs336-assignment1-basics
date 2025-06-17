@@ -1,47 +1,76 @@
-#!/usr/bin/env bash
-set -eux
+#!/bin/bash
 
-# -------------------------------------------------------------
-# 1. Auto‐shutdown after N minutes
-# -------------------------------------------------------------
-SHUTDOWN_MINUTES="${SHUTDOWN_MINUTES:-480}"
-sudo shutdown -h +"$SHUTDOWN_MINUTES" &
+# CS336 VM One-Time Setup Script
+# Only runs on the first boot of a new disk/VM
 
-# -------------------------------------------------------------
-# 2. Mount & format /dev/sdb → /mnt/data, then chown it
-# -------------------------------------------------------------
-DEVICE=/dev/sdb
-MOUNT=/mnt/data
+set -e
 
-if ! mount | grep -q "$MOUNT"; then
-  sudo mkdir -p "$MOUNT"
-  if ! sudo blkid "$DEVICE" >/dev/null 2>&1; then
-    sudo mkfs.ext4 -m 0 -F "$DEVICE"
-  fi
-  sudo mount "$DEVICE" "$MOUNT"
+SETUP_MARKER="/var/lib/cs336-setup-complete"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+# Check if setup has already been completed
+if [[ -f "$SETUP_MARKER" ]]; then
+    log "CS336 setup already completed, skipping..."
+    exit 0
 fi
 
-# Make /mnt/data owned by your SSH user
-sudo chown -R "$(whoami)":"$(whoami)" "$MOUNT"
+log "Starting CS336 one-time VM setup..."
 
-# Setup persistent SSH
-PERSISTENT_SSH="/mnt/data/.ssh"
-mkdir -p "$PERSISTENT_SSH"
-chmod 700 "$PERSISTENT_SSH"
-ln -sf "$PERSISTENT_SSH" "$HOME/.ssh"
+# Auto-shutdown after 8 hours to save costs (runs every boot)
+SHUTDOWN_MINUTES=${SHUTDOWN_MINUTES:-480}
+log "Setting up auto-shutdown in $SHUTDOWN_MINUTES minutes"
+echo "sudo shutdown -h +$SHUTDOWN_MINUTES" | sudo at now 2>/dev/null || true
 
-# Install uv
+# Install uv package manager
+log "Installing uv package manager..."
 curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 
-# Setup dotfiles
-PERSISTENT_DOTFILES="/mnt/data/dotfiles"
-if [ ! -d "$PERSISTENT_DOTFILES/.git" ]; then
-  git clone git@github.com:roeehendel/dotfiles.git "$PERSISTENT_DOTFILES"
+# Install useful tools
+log "Installing useful tools..."
+sudo apt-get update -qq
+sudo apt-get install -y htop tmux zsh tree jq
+
+# Clone project repository
+PROJECT_DIR="/home/$(whoami)/assignment1-basics"
+if [[ ! -d "$PROJECT_DIR" ]]; then
+    log "Cloning project repository..."
+    
+    # Try SSH first if key exists, fallback to HTTPS
+    if [[ -f ~/.ssh/id_ed25519 ]]; then
+        REPO_URL="git@github.com:roeehendel/assignment1-basics.git"
+        log "Using SSH clone (key found)"
+    else
+        REPO_URL="https://github.com/roeehendel/assignment1-basics.git"
+        log "Using HTTPS clone (no SSH key found)"
+    fi
+    
+    git clone "$REPO_URL" "$PROJECT_DIR" || {
+        log "Failed to clone $REPO_URL"
+        mkdir -p "$PROJECT_DIR"
+    }
 fi
 
-if [ -d "$PERSISTENT_DOTFILES" ]; then
-  ln -sf "$PERSISTENT_DOTFILES" "$HOME/dotfiles"
-  cd "$HOME/dotfiles" && ./.scripts/install.sh
+# Install project dependencies if pyproject.toml exists
+if [[ -f "$PROJECT_DIR/pyproject.toml" ]]; then
+    log "Installing project dependencies..."
+    cd "$PROJECT_DIR"
+    export PATH="$HOME/.local/bin:$PATH"
+    uv pip install --system -e .
+    log "Dependencies installed successfully!"
+else
+    log "pyproject.toml not found, skipping dependency installation"
+    log "After cloning your repo, install with: cd ~/assignment1-basics && uv pip install -e ."
 fi
 
-echo "✅ VM setup complete: /mnt/data mounted, auto‐shutdown in $SHUTDOWN_MINUTES minutes."
+# Mark setup as complete
+log "Creating setup completion marker..."
+sudo touch "$SETUP_MARKER"
+
+log "CS336 setup complete! Your environment is ready."
+log "Project location: $PROJECT_DIR"
+log "This setup will not run again on future boots." 

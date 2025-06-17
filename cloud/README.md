@@ -1,75 +1,156 @@
-# CS336 – One-repo Cloud GPU Workflow
+# Cloud VM Management
 
-## One-time setup (local machine)
+This directory contains scripts for managing Google Cloud VMs with shared storage for your CS336 assignment. The setup allows you to easily switch between T4 and A100 GPUs while maintaining persistent data.
 
-Run:
+## 🔐 Setup
 
-    ./bootstrap_local.sh          # installs gcloud, chooses project & zone, adds budget alert
-    ./cloud/init.sh               # creates shared data disk, opens GPU-quota request page
+**One-time setup required before using VMs:**
 
-Then request **1 T4** and **1 A100-40GB** quota in your zone (`me-west1-b` recommended in Israel).  
-Wait for the approval.
+1. **Setup Google Cloud authentication**:
+   ```bash
+   gcloud auth login
+   gcloud config set project YOUR_PROJECT_ID
+   ```
 
-Run:
-    ./cloud/dev_up.sh
-    gcloud compute config-ssh --project=$(gcloud config get-value project)
-    
+**Optional: Setup budget alerts** (recommended):
+   ```bash
+   ./cloud/create_budget_alert.sh
+   ```
 
----
 
-## Daily workflow
 
-    # 🛠️  interactive development
-    ./cloud/dev_up.sh             # start T4 spot VM
-    code .                        # VS Code Remote-SSH → “Reopen in Container”
-    ./cloud/stop.sh               # stop VM when done
+2. **Start your first VM**:
+   ```bash
+   ./cloud/vm start t4
+   ```
 
-    # 🚂  heavy training
-    ./cloud/train_up.sh           # start A100 spot VM
-    python train.py …             # checkpoints live in /mnt/data
-    ./cloud/stop.sh
+## 🚀 Quick Start
 
----
+The `vm` script is your single interface for all VM operations:
 
-## What lives where
+```bash
+# Start a T4 VM for development
+./cloud/vm start t4
 
-| Path / File                | Purpose |
-|---------------------------|---------|
-| `cloud/env.sh`            | all tunables (zone, disk sizes, shutdown hours) |
-| `cloud/*.sh`              | scripted VM lifecycle (create / stop / delete) |
-| `docker/Dockerfile`       | builds CUDA + Python image; installs `uv` and project deps |
-| `pyproject.toml`, `uv.lock` | define exact Python environment via `uv` |
-| `.devcontainer.json`      | tells VS Code to use that same Docker image on remote |
-| `bootstrap_local.sh`      | local gcloud install + login + billing budget alert |
+# Switch to A100 for training (automatically stops T4)
+./cloud/vm switch a100
 
----
+# Check status of all VMs
+./cloud/vm status
 
-## Docker, uv, and dev-container: how they work together
+# SSH into running VM
+./cloud/vm ssh a100
 
-- **Docker** ensures every VM has the same base OS + CUDA + Python tooling.
-- **uv** (inside Docker) reads `pyproject.toml` + `uv.lock` to install the exact Python packages.
-- **.devcontainer.json** tells VS Code: when I SSH to this box, reopen the repo *inside the Docker container*, so all terminals and kernels see the right env and the GPU.
+# Stop a VM
+./cloud/vm stop a100
 
-Build & run the Docker image (once per image update) inside the VM:
+# Clean up (stop/delete all VMs)
+./cloud/vm cleanup
+```
 
-    sudo docker build -t cs336 docker/
-    sudo docker run -it --gpus all -v /mnt/data:/workspace cs336
+## 🖥️ VM Types
 
-All state (code, env, checkpoints) lives on `/mnt/data`, the shared persistent disk.  
-If a spot VM is preempted, you just rerun `*_up.sh` and continue.
+| Type | Machine | GPU | Use Case |
+|------|---------|-----|----------|
+| `t4` | n1-standard-4 | NVIDIA T4 | Development, inference, debugging |
+| `a100` | a2-highgpu-1g | NVIDIA A100 | Large-scale training |
+| `cpu` | n1-standard-4 | None | Testing, data preprocessing |
 
----
+## 📁 Shared Storage
 
-## Optional: Budget alert (auto-handled by `bootstrap_local.sh`)
+All VMs share the same boot disk (`cs336-shared-boot`), which means:
+- **Your data persists** when switching between VMs
+- **Code, models, datasets** are accessible from any VM type
+- **Docker images and containers** persist across VM switches
 
-This will email you when you’ve used 250 USD of your $300 free credit.
+Your home directory on the shared boot disk persists across VM switches
 
-    gcloud billing budgets create \
-      --billing-account=YOUR_ACCOUNT_ID \
-      --display-name="trial-credit-guard" \
-      --budget-amount=250USD \
-      --threshold-rule="percent=1"
+### Environment Setup
 
-To find your billing account ID:
+**Option 1: One-Time Auto Setup (Recommended)**
+```bash
+# First time: installs everything automatically (runs once)
+./cloud/vm start t4
 
-    gcloud beta billing projects describe YOUR_PROJECT_ID --format='value(billingAccountName)'
+# Wait ~3-5 minutes for one-time setup, then SSH in
+./cloud/vm ssh t4
+
+# Your project is ready at: ~/assignment1-basics
+
+# Future starts are instant (setup already done)
+./cloud/vm stop t4
+./cloud/vm start t4  # <- Fast! No reinstallation
+```
+
+**Option 2: Docker Workflow**
+```bash
+# VMs boot with Docker + GPU drivers pre-installed
+./cloud/vm start t4
+
+# Build and run your containerized environment
+docker build -t cs336 .
+docker run -it --gpus all -v $(pwd):/workspace cs336
+```
+
+## 📋 Commands
+
+### Basic Operations
+- `./cloud/vm start <type>` - Start a VM (creates if doesn't exist)
+- `./cloud/vm stop <type>` - Stop a running VM
+- `./cloud/vm switch <type>` - Switch to different VM type
+- `./cloud/vm status` - Show status of all VMs and shared storage
+- `./cloud/vm ssh <type>` - SSH into a running VM
+- `./cloud/vm cleanup` - Interactive cleanup (stop/delete VMs)
+
+
+
+## 🔧 Configuration
+
+Configuration is at the top of the `vm` script:
+- **Project**: Automatically detected from `gcloud config`
+- **Zone**: `me-west1-b` (Tel Aviv)
+- **Shared Disk**: `cs336-shared-boot` (400GB)
+- **Auto-shutdown**: 8 hours
+
+## 💡 Tips
+
+- **Preemptible VMs**: All VMs are preemptible to save costs
+- **Auto-shutdown**: VMs automatically shutdown after 8 hours
+- **Shared State**: All your work persists when switching VM types
+- **SSH Configuration**: Automatically updated when starting VMs
+
+## 🧹 Cleanup
+
+The `cleanup` command helps you manage costs:
+1. **Stop VMs**: Keeps instances but stops billing for compute
+2. **Delete VMs**: Removes instances entirely (shared disk remains)
+3. **Manual cleanup**: Use Google Cloud Console for shared disk deletion
+
+## 🏗️ Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   T4 Instance   │    │  A100 Instance  │    │  CPU Instance   │
+│   (cs336-t4)    │    │  (cs336-a100)   │    │  (cs336-cpu)    │
+└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
+          │                      │                      │
+          └──────────────────────┼──────────────────────┘
+                                 │
+                   ┌─────────────┴─────────────┐
+                   │   Shared Boot Disk        │
+                   │   (cs336-shared-boot)     │
+                   │   • 400GB SSD             │
+                   │   • Persistent storage    │
+                   │   • PyTorch DLVM image    │
+                   └───────────────────────────┘
+```
+
+Only one VM can use the shared disk at a time, ensuring data consistency and cost efficiency.
+
+## 📁 File Structure
+
+The cloud directory contains only essential files:
+- `vm` - Main VM management script (handles everything!)
+- `vm_setup.sh` - One-time environment setup script
+- `create_budget_alert.sh` - Budget monitoring setup
+- `local_setup.sh` - Local development environment setup
