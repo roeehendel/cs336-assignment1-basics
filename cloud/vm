@@ -4,8 +4,10 @@ set -euo pipefail
 # Configuration
 SCRIPT_DIR="$(dirname "$0")"
 PROJECT_ID=$(gcloud config get-value project)
-ZONE="me-west1-b"          # Tel-Aviv
-REGION="me-west1"
+ZONE="europe-west4-a"          # Tel-Aviv (primary)
+# Backup zones for A100 availability (same region as shared disk)
+A100_ZONES=("me-west1-b" "me-west1-a" "me-west1-c")
+REGION="europe-west4"
 SHARED_BOOT_DISK="cs336-shared-boot"
 SHARED_DISK_SIZE="400GB"
 SHUTDOWN_HOURS=8           # auto-halt time
@@ -24,19 +26,22 @@ usage() {
     echo "  start <type>    Start a VM (a100|t4|cpu)"
     echo "  stop <type>     Stop a VM"
     echo "  switch <type>   Switch to a different VM type (stops current, starts new)"
+    echo "  migrate <zone>  Migrate shared disk to a new zone (for better GPU availability)"
     echo "  status          Show status of all VMs"
     echo "  ssh <type>      SSH into a running VM"
     echo "  cleanup         Stop all VMs and optionally delete them"
     echo ""
     echo "VM Types:"
-    echo "  a100   - A2 machine with A100 GPU (for training)"
+    echo "  a100   - A2 machine with A100 GPU (for large-scale training)"
+    echo "  v100   - N1 machine with V100 GPU (for training)"
     echo "  t4     - N1 machine with T4 GPU (for development/inference)"
     echo "  cpu    - N1 machine CPU-only (for testing)"
     echo ""
     echo "Examples:"
-    echo "  $0 start t4      # Start T4 VM"
-    echo "  $0 switch a100   # Switch from current VM to A100"
-    echo "  $0 status        # Show all VM statuses"
+    echo "  $0 start t4               # Start T4 VM"
+    echo "  $0 switch a100            # Switch from current VM to A100"
+    echo "  $0 migrate europe-west4-a # Move disk to Netherlands for A100 availability"
+    echo "  $0 status                 # Show all VM statuses"
 }
 
 log() {
@@ -57,6 +62,9 @@ get_vm_config() {
         "a100")
             echo "cs336-a100 a2-highgpu-1g "
             ;;
+        "v100")
+            echo "cs336-v100 n1-standard-4 --accelerator=type=nvidia-tesla-v100,count=1"
+            ;;
         "t4")
             echo "cs336-t4 n1-standard-4 --accelerator=type=nvidia-tesla-t4,count=1"
             ;;
@@ -65,14 +73,14 @@ get_vm_config() {
             ;;
         *)
             error "Unknown VM type: $vm_type"
-            echo "Valid types: a100, t4, cpu"
+            echo "Valid types: a100, v100, t4, cpu"
             exit 1
             ;;
     esac
 }
 
 get_all_vm_types() {
-    echo "a100 t4 cpu"
+    echo "a100 v100 t4 cpu"
 }
 
 parse_vm_config() {
@@ -114,9 +122,72 @@ check_disk_availability() {
     local disk_users
     disk_users=$(gcloud compute disks describe "$SHARED_BOOT_DISK" --zone="$ZONE" --format="value(users)" 2>/dev/null || echo "")
     if [[ -n "$disk_users" ]]; then
-        error "Shared boot disk is currently in use by another instance!"
-        echo "Stop the other instance first with: $0 stop <type>"
-        exit 1
+        # Check status of all instances using the disk
+        local running_users=""
+        local stopped_users=""
+        for user_url in $disk_users; do
+            # Extract instance name from the full URL
+            local instance_name
+            instance_name=$(basename "$user_url")
+            local status
+            status=$(get_vm_status "$instance_name")
+            if [[ "$status" == "RUNNING" ]]; then
+                running_users="$running_users $instance_name"
+            elif [[ "$status" == "TERMINATED" || "$status" == "STOPPED" ]]; then
+                stopped_users="$stopped_users $instance_name"
+            fi
+        done
+        
+        # If there are running instances, error out
+        if [[ -n "$running_users" ]]; then
+            error "Shared boot disk is currently in use by running instance(s):$running_users"
+            echo "Stop the running instance(s) first with: $0 stop <type>"
+            exit 1
+        fi
+        
+        # If there are stopped instances, delete them to free the disk
+        if [[ -n "$stopped_users" ]]; then
+            warn "Shared boot disk is attached to stopped instance(s):$stopped_users"
+            log "Deleting stopped instances to free the disk..."
+            for instance_name in $stopped_users; do
+                log "Deleting stopped instance: $instance_name"
+                gcloud compute instances delete "$instance_name" --zone="$ZONE" --quiet
+            done
+        fi
+    fi
+}
+
+create_vm_in_zone() {
+    local vm_type="$1"
+    local zone="$2"
+    local config
+    config=$(get_vm_config "$vm_type")
+    read -r instance_name machine_type accelerator_flags <<< "$(parse_vm_config "$config")"
+    
+    log "Trying to create $instance_name in zone $zone..."
+    
+    local create_cmd="gcloud compute instances create \"$instance_name\" \
+        --machine-type=\"$machine_type\" \
+        --disk=name=\"$SHARED_BOOT_DISK\",boot=yes,auto-delete=no \
+        --maintenance-policy=TERMINATE \
+        --preemptible \
+        --metadata-from-file=startup-script=\"$SCRIPT_DIR/vm_setup.sh\" \
+        --metadata=SHUTDOWN_MINUTES=\$((SHUTDOWN_HOURS * 60)) \
+        --tags=ssh \
+        --zone=\"$zone\""
+    
+    if [[ -n "$accelerator_flags" ]]; then
+        create_cmd="$create_cmd $accelerator_flags"
+    fi
+    
+    if eval "$create_cmd"; then
+        # Update global ZONE variable for other operations
+        ZONE="$zone"
+        log "VM $instance_name created successfully in zone $zone!"
+        return 0
+    else
+        warn "Failed to create VM in zone $zone - see error above"
+        return 1
     fi
 }
 
@@ -135,25 +206,9 @@ create_vm() {
     ensure_shared_disk
     check_disk_availability
     
-    log "Creating VM instance: $instance_name"
+    # Create VM in the zone where the shared disk exists
+    create_vm_in_zone "$vm_type" "$ZONE"
     
-    local create_cmd="gcloud compute instances create \"$instance_name\" \
-        --machine-type=\"$machine_type\" \
-        --disk=name=\"$SHARED_BOOT_DISK\",boot=yes,auto-delete=no \
-        --maintenance-policy=TERMINATE \
-        --preemptible \
-        --metadata-from-file=startup-script=\"$SCRIPT_DIR/vm_setup.sh\" \
-        --metadata=SHUTDOWN_MINUTES=\$((SHUTDOWN_HOURS * 60)) \
-        --tags=ssh \
-        --zone=\"$ZONE\""
-    
-    if [[ -n "$accelerator_flags" ]]; then
-        create_cmd="$create_cmd $accelerator_flags"
-    fi
-    
-    eval "$create_cmd"
-    
-    log "VM $instance_name created successfully!"
     setup_ssh
 }
 
@@ -233,7 +288,7 @@ switch_vm() {
     
     log "Switching to $target_type VM..."
     
-    # Stop all running VMs first
+    # Stop and delete all other VMs to free the shared disk
     for vm_type in $(get_all_vm_types); do
         if [[ "$vm_type" != "$target_type" ]]; then
             local config
@@ -247,6 +302,9 @@ switch_vm() {
                     log "Stopping $vm_type VM ($instance_name)..."
                     stop_vm "$vm_type"
                 fi
+                # Delete the instance to free the shared disk
+                log "Deleting $vm_type VM ($instance_name) to free shared disk..."
+                gcloud compute instances delete "$instance_name" --zone="$ZONE" --quiet
             fi
         fi
     done
@@ -376,6 +434,79 @@ show_connection_info() {
     echo "Shared storage is available in your home directory"
 }
 
+migrate_disk() {
+    local target_zone="$1"
+    local target_region
+    target_region=$(echo "$target_zone" | cut -d'-' -f1-2)
+    
+    if [[ -z "$target_zone" ]]; then
+        error "Target zone required for migrate command"
+        echo "Good zones for Israel with A100s: europe-west4-a, us-east1-a"
+        exit 1
+    fi
+    
+    log "Migrating shared disk from $ZONE to $target_zone..."
+    
+    # Check if any VMs are running
+    for vm_type in $(get_all_vm_types); do
+        local config
+        config=$(get_vm_config "$vm_type")
+        read -r instance_name _ _ <<< "$(parse_vm_config "$config")"
+        
+        if vm_exists "$instance_name"; then
+            local status
+            status=$(get_vm_status "$instance_name")
+            if [[ "$status" == "RUNNING" ]]; then
+                error "Cannot migrate disk while VMs are running!"
+                echo "Stop all VMs first with: $0 cleanup"
+                exit 1
+            fi
+        fi
+    done
+    
+    # Clean up any stopped instances
+    log "Cleaning up stopped instances..."
+    check_disk_availability
+    
+    # Create snapshot
+    local snapshot_name="cs336-migration-$(date +%Y%m%d-%H%M%S)"
+    log "Creating snapshot: $snapshot_name"
+    gcloud compute disks snapshot "$SHARED_BOOT_DISK" \
+        --snapshot-names="$snapshot_name" \
+        --zone="$ZONE"
+    
+    # Create new disk from snapshot in target zone
+    log "Creating new disk in $target_zone from snapshot..."
+    gcloud compute disks create "$SHARED_BOOT_DISK" \
+        --size="$SHARED_DISK_SIZE" \
+        --type=pd-ssd \
+        --source-snapshot="$snapshot_name" \
+        --zone="$target_zone"
+    
+    # Delete old disk
+    log "Deleting old disk in $ZONE..."
+    gcloud compute disks delete "$SHARED_BOOT_DISK" --zone="$ZONE" --quiet
+    
+    # Update script configuration
+    log "Updating zone configuration in script..."
+    sed -i.bak "s/ZONE=\"$ZONE\"/ZONE=\"$target_zone\"/" "$0"
+    sed -i.bak "s/REGION=\"$REGION\"/REGION=\"$target_region\"/" "$0"
+    
+    # Clean up snapshot (optional - you can keep it as backup)
+    echo ""
+    echo -e "${YELLOW}Delete migration snapshot? (saves storage costs) (y/N)${NC}"
+    read -r response
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        log "Deleting snapshot: $snapshot_name"
+        gcloud compute snapshots delete "$snapshot_name" --quiet
+    else
+        log "Keeping snapshot: $snapshot_name (delete manually later to save costs)"
+    fi
+    
+    log "Migration complete! New zone: $target_zone"
+    log "You can now try: $0 start a100"
+}
+
 # Main command handling
 COMMAND="${1:-}"
 VM_TYPE="${2:-}"
@@ -404,6 +535,14 @@ case "$COMMAND" in
             exit 1
         fi
         switch_vm "$VM_TYPE"
+        ;;
+    "migrate")
+        if [[ -z "$VM_TYPE" ]]; then
+            error "Target zone required for migrate command"
+            usage
+            exit 1
+        fi
+        migrate_disk "$VM_TYPE"
         ;;
     "status")
         show_status
