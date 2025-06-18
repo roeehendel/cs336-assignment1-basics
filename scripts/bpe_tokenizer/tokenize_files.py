@@ -18,8 +18,8 @@ TOKENIZED_DIR = os.path.join(OUTPUT_DIR, "token_ids")
 
 def main():
     configs = [
-        # {"tokenizer_dir": TS_TOKENZIER_DIR, "input_files": [TS_VALID_FILE, TS_TRAIN_FILE]},
-        {"tokenizer_dir": OWT_TOKENIZER_DIR, "input_files": [OWT_VALID_FILE, OWT_TRAIN_FILE]},
+        {"tokenizer_dir": TS_TOKENZIER_DIR, "input_files": [TS_VALID_FILE, TS_TRAIN_FILE]},
+        # {"tokenizer_dir": OWT_TOKENIZER_DIR, "input_files": [OWT_VALID_FILE, OWT_TRAIN_FILE]},
     ]
 
     os.makedirs(TOKENIZED_DIR, exist_ok=True)
@@ -36,7 +36,6 @@ def main():
                 tokenizer_dir=tokenizer_dir,
                 input_file=input_file,
                 output_file=output_path,
-                num_workers=4,
                 show_progress=True,
             )
             loaded_token_ids = np.load(output_path)

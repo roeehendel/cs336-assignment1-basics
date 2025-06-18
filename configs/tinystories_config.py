@@ -2,6 +2,7 @@
 
 from configs.tinystories_data_config import TINYSTORIES_DATA_CONFIG
 from cs336_basics.models.transformer_lm_config import TransformerLMConfig
+from cs336_basics.training.device_utils import find_best_device
 from cs336_basics.training.train_config import (
     AdamWConfig,
     CheckpointingConfig,
@@ -21,7 +22,7 @@ config = ExperimentConfig(
         batch_size=32,
         device_batch_size=8,
         # device="cpu",
-        device="mps",
+        device=find_best_device(),
         # single_batch_for_debug=True,
     ),
     validation=ValidationConfig(
