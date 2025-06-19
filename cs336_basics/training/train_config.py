@@ -12,9 +12,13 @@ class DataConfig(BaseModel):
 
 
 class TrainingConfig(BaseModel):
+    seed: int | None = None
+
     context_length: int
 
     total_tokens: int
+
+    early_stop_fraction: float | None = None
 
     batch_size: int
     device_batch_size: int
@@ -26,18 +30,21 @@ class TrainingConfig(BaseModel):
     @computed_field
     @property
     def num_steps(self) -> int:
-        return self.total_tokens // (self.batch_size * self.context_length)
+        total_steps = self.total_tokens // (self.batch_size * self.context_length)
+        if self.early_stop_fraction is not None:
+            return int(self.early_stop_fraction * total_steps)
+        return total_steps
 
 
 class ValidationConfig(BaseModel):
-    every_n_steps: int | None = None
+    every_n_tokens: int | None = None
     iterations: int
     batch_size: int
 
 
 class CheckpointingConfig(BaseModel):
     dir: FilePath
-    every_n_steps: int | None = None
+    every_n_tokens: int | None = None
 
 
 class AdamWConfig(BaseModel):

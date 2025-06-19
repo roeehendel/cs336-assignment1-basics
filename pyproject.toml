@@ -25,6 +25,7 @@ dependencies = [
     "invoke>=2.2.0",
     "matplotlib>=3.10.3",
     "jsonargparse[all]>=4.40.0",
+    "pytorch-lightning>=2.5.1.post0",
 ]
 
 

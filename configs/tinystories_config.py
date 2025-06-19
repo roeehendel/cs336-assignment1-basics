@@ -16,19 +16,21 @@ from cs336_basics.training.train_config import (
 config = ExperimentConfig(
     data=TINYSTORIES_DATA_CONFIG,
     training=TrainingConfig(
+        seed=42,
         context_length=256,
-        # total_tokens=327_680_000,
-        total_tokens=40_000_000,
+        total_tokens=327_680_000,
+        # total_tokens=40_000_000,
+        # early_stop_fraction=0.2,
         batch_size=32,
-        device_batch_size=8,
+        device_batch_size=32,
         # device="cpu",
         device=find_best_device(),
         # single_batch_for_debug=True,
     ),
     validation=ValidationConfig(
-        every_n_steps=200,
-        iterations=32,
-        batch_size=8,
+        every_n_tokens=200 * 8192,
+        iterations=16,
+        batch_size=32,
     ),
     model=TransformerLMConfig(
         vocab_size=10_000,
@@ -46,13 +48,13 @@ config = ExperimentConfig(
     ),
     lr_scheduler=CosineAnnealingConfig(
         max_lr=2e-3,
-        min_lr=5e-5,
+        min_lr=2e-5,
         warmup_fraction=0.05,
         annealing_fraction=1.0,
     ),
     checkpointing=CheckpointingConfig(
         dir="output/checkpoints/tinystories",
-        every_n_steps=1000,
+        every_n_tokens=1000 * 8192,
     ),
     logging=LoggingConfig(
         wandb=True,

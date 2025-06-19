@@ -6,6 +6,7 @@ from functools import partial
 
 import numpy as np
 import torch
+from pytorch_lightning import seed_everything
 from tqdm import tqdm
 
 import wandb
@@ -25,12 +26,15 @@ def train(cfg: ExperimentConfig):
     # TODO: make logging more modular
     _init_logging(cfg)
 
+    seed_everything(cfg.training.seed, workers=True)
+
     model = TransformerLM(cfg=cfg.model)
     optimizer = AdamW(model.parameters(), **cfg.optimizer.model_dump())
     lr_scheduler = partial(lr_cosine_schedule, **cfg.lr_scheduler.model_dump(), num_steps=cfg.training.num_steps)
 
     model = model.to(cfg.training.device)
-    # model = torch.compile(model, backend="aot_eager")
+    if cfg.training.device == "cuda":
+        model = torch.compile(model)
 
     # wandb.watch(model, log="all", log_freq=100)
 
@@ -39,11 +43,23 @@ def train(cfg: ExperimentConfig):
 
     tokenizer = load_bpe_tokenizer(cfg.data.tokenizer_path)
 
+    num_tokens_processed = 0
+
     for step in tqdm(range(cfg.training.num_steps)):
         last_step = step == cfg.training.num_steps - 1
 
+        prev_tokens_processed = num_tokens_processed
+        num_tokens_processed += cfg.training.batch_size * cfg.training.context_length
+
+        # Check if we've crossed a checkpoint threshold
         should_checkpoint = (
-            step > 0 and cfg.checkpointing.every_n_steps and (step % cfg.checkpointing.every_n_steps == 0 or last_step)
+            step > 0
+            and cfg.checkpointing.every_n_tokens
+            and (
+                prev_tokens_processed // cfg.checkpointing.every_n_tokens
+                != num_tokens_processed // cfg.checkpointing.every_n_tokens
+                or last_step
+            )
         )
         if should_checkpoint:
             os.makedirs(cfg.checkpointing.dir, exist_ok=True)
@@ -55,30 +71,32 @@ def train(cfg: ExperimentConfig):
                 out=checkpoint_path,
             )
 
-        should_validate = cfg.validation.every_n_steps and (step % cfg.validation.every_n_steps == 0 or last_step)
+        # Check if we've crossed a validation threshold
+        should_validate = cfg.validation.every_n_tokens and (
+            prev_tokens_processed // cfg.validation.every_n_tokens
+            != num_tokens_processed // cfg.validation.every_n_tokens
+            or last_step
+        )
         if should_validate:
-            start_time = time.time()
+            validation_start_time = time.time()
             _validate(model=model, dataset=validation_dataset, cfg=cfg, step=step)
-            end_time = time.time()
-            validation_time = end_time - start_time
+            validation_time = time.time() - validation_start_time
             tqdm.write(f"Validation time: {validation_time} seconds")
             # TODO: consider separating generation from validation
             if step > 0:
-                start_time = time.time()
+                generation_start_time = time.time()
                 _generate(cfg=cfg, step=step, model=model, tokenizer=tokenizer)
-                end_time = time.time()
-                generation_time = end_time - start_time
+                generation_time = time.time() - generation_start_time
                 tqdm.write(f"Generation time: {generation_time} seconds")
 
-        device_batch_size = 16
-        accumulation_steps = cfg.training.batch_size // device_batch_size
+        accumulation_steps = cfg.training.batch_size // cfg.training.device_batch_size
 
         optimizer.zero_grad()
-        start_time = time.time()
+        batch_start_time = time.time()
         for accumulation_step in range(accumulation_steps):
             input_token_ids, output_token_ids = get_batch(
                 dataset=train_dataset,
-                batch_size=device_batch_size,
+                batch_size=cfg.training.device_batch_size,
                 context_length=cfg.training.context_length,
                 device=cfg.training.device,
                 single_batch_for_debug=cfg.training.single_batch_for_debug,
@@ -89,7 +107,7 @@ def train(cfg: ExperimentConfig):
             loss.backward()
 
         end_time = time.time()
-        batch_time = end_time - start_time
+        batch_time = end_time - batch_start_time
         batch_num_tokens = cfg.training.batch_size * cfg.training.context_length
 
         lr = lr_scheduler(step=step)
@@ -106,6 +124,7 @@ def train(cfg: ExperimentConfig):
                 "train/perplexity": perplexity.item(),
                 "train/lr": lr,
                 "train/tokens_per_second": int(batch_num_tokens / batch_time),
+                "train/total_tokens_processed": num_tokens_processed,
             },
         )
 
@@ -113,17 +132,27 @@ def train(cfg: ExperimentConfig):
 def _init_logging(cfg: ExperimentConfig):
     if cfg.logging.wandb:
         wandb.login()
-        wandb.init(
-            project="cs336-assignment-1",
-            config=cfg.model_dump(),
-        )
+        if wandb.run is None:
+            wandb.init(
+                project="cs336-assignment-1",
+                config=cfg.model_dump(),
+            )
+        else:
+            wandb.config.update(cfg.model_dump())
 
 
 def _write_log(cfg: ExperimentConfig, step: int, data: dict):
     if cfg.logging.wandb:
         wandb.log(data, step=step)
     if cfg.logging.console:
-        tqdm.write(f"Step {step}/{cfg.training.num_steps - 1} {data}")
+        # Format floats to 2 decimal places for console output
+        formatted_data = {}
+        for key, value in data.items():
+            if isinstance(value, float):
+                formatted_data[key] = f"{value:.2f}"
+            else:
+                formatted_data[key] = value
+        tqdm.write(f"Step {step}/{cfg.training.num_steps - 1} {formatted_data}")
 
 
 def _generate(
@@ -162,7 +191,14 @@ def _validate(model: TransformerLM, dataset: np.ndarray, cfg: ExperimentConfig, 
     loss = torch.tensor(losses).mean()
     perplexity = torch.exp(loss)
 
-    _write_log(cfg=cfg, step=step, data={"validation/loss": loss.item(), "validation/perplexity": perplexity.item()})
+    _write_log(
+        cfg=cfg,
+        step=step,
+        data={
+            "validation/loss": loss.item(),
+            "validation/perplexity": perplexity.item(),
+        },
+    )
 
 
 if __name__ == "__main__":

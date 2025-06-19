@@ -24,7 +24,7 @@ config = ExperimentConfig(
         # single_batch_for_debug=True,
     ),
     validation=ValidationConfig(
-        every_n_steps=200,
+        every_n_tokens=200,
         iterations=4,
         batch_size=8,
     ),
@@ -51,7 +51,7 @@ config = ExperimentConfig(
     ),
     checkpointing=CheckpointingConfig(
         dir="output/checkpoints/debug",
-        every_n_steps=1000,
+        every_n_tokens=1000,
     ),
     logging=LoggingConfig(
         wandb=True,
