@@ -168,4 +168,4 @@ cython_debug/
 /profiling/
 /output/token_ids/
 /output/checkpoints/
-/wandb/
+/wandb/output/
